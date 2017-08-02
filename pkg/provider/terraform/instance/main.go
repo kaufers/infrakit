@@ -27,11 +27,6 @@ func getDir() string {
 	return os.TempDir()
 }
 
-type bootstrapOptions struct {
-	InstanceID   *string
-	GroupSpecURL *string
-}
-
 func main() {
 
 	cmd := &cobra.Command{
@@ -43,18 +38,20 @@ func main() {
 	dir := cmd.Flags().String("dir", getDir(), "Dir for storing plan files")
 	pollInterval := cmd.Flags().Duration("poll-interval", 30*time.Second, "Terraform polling interval")
 	standalone := cmd.Flags().Bool("standalone", false, "Set if running standalone, disables manager leadership verification")
-	// Bootstrap options
-	bootstrapGrpSpec := cmd.Flags().String("bootstrap-group-spec-url", "", "Group spec to import the current into into, must be used with 'bootstrap-instance-id'")
-	bootstrapInstID := cmd.Flags().String("bootstrap-instance-id", "", "Current instance ID, must be used with 'bootstrap-group-spec-url'")
-	bootstrap := bootstrapOptions{
-		InstanceID:   bootstrapInstID,
-		GroupSpecURL: bootstrapGrpSpec,
+	// Import options
+	importResType := cmd.Flags().String("import-resource-type", "", "Defines the terraform resource type to import")
+	importResID := cmd.Flags().String("import-resource-id", "", "Defines the resource ID to import")
+	importGrpID := cmd.Flags().String("import-group-id", "", "Defines the group ID to import the resource into (optional)")
+	importOpts := ImportOptions{
+		ResourceType: importResType,
+		ResourceID:   importResID,
+		GroupID:      importGrpID,
 	}
 	cmd.Run = func(c *cobra.Command, args []string) {
 		mustHaveTerraform()
 		cli.SetLogLevel(*logLevel)
 		cli.RunPlugin(*name, instance_plugin.PluginServer(
-			NewTerraformInstancePlugin(*dir, *pollInterval, *standalone, &bootstrap)),
+			NewTerraformInstancePlugin(*dir, *pollInterval, *standalone, &importOpts)),
 		)
 	}
 
