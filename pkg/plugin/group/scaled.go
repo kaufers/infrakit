@@ -130,7 +130,7 @@ func (s *scaledGroup) Destroy(inst instance.Description, ctx instance.Context) {
 
 func (s *scaledGroup) List() ([]instance.Description, error) {
 	settings := s.latestSettings()
-
+	log.Infof("SRK -- issuing DescribeInstances for %v", s.memberTags)
 	return settings.instancePlugin.DescribeInstances(s.memberTags, false)
 }
 
@@ -168,10 +168,12 @@ func labelAndList(scaled Scaled) ([]instance.Description, error) {
 	}
 
 	if !needsLabel(descriptions) {
+		log.Infof("SRK -- returning from labelAndList, no labels needed")
 		return descriptions, nil
 	}
 
 	if err := scaled.Label(); err != nil {
+		log.Infof("SRK -- adding Label to list ...")
 		return nil, err
 	}
 

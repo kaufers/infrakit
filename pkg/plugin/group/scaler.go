@@ -233,7 +233,7 @@ func (s *scaler) converge() {
 		return
 	}
 
-	log.Debugf("Found existing instances: %v", descriptions)
+	log.Debugf("Found %v existing %v instances: %v", len(descriptions), string(s.ID()), descriptions)
 
 	grp := sync.WaitGroup{}
 
