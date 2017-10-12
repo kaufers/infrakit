@@ -382,6 +382,7 @@ func (p *plugin) scanLocalFiles() (map[TResourceType]map[TResourceName]TResource
 	err := fs.Walk(p.Dir,
 
 		func(path string, info os.FileInfo, err error) error {
+			log.Infof("SRK scanLocalFiles path %v -- err %v -- info %v ", path, err, info)
 			matches := instanceTfFileRegex.FindStringSubmatch(info.Name())
 
 			if len(matches) == 4 {

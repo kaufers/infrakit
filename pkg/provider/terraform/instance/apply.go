@@ -182,6 +182,7 @@ func (p *plugin) handleFiles(fns tfFuncs) (err error) {
 	fs := &afero.Afero{Fs: p.fs}
 	err = fs.Walk(p.Dir,
 		func(path string, info os.FileInfo, err error) error {
+			log.Infof("SRK handleFiles path %v -- err %v -- info %v ", path, err, info)
 			// Only the VM files are valid for pruning; once pruned then the group controller polling will
 			// ensure that a replacement is created. There is no mechanism that ensures consistency for
 			// dedicated and global resources.
