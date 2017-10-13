@@ -380,9 +380,11 @@ func (p *plugin) scanLocalFiles() (map[TResourceType]map[TResourceName]TResource
 	fs := &afero.Afero{Fs: p.fs}
 	// just scan the directory for the instance-*.tf.json files
 	err := fs.Walk(p.Dir,
+
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Debugf("Ignoring file %s due to error: %s", path, err)
+				log.Infof("Ignoring file due to error: %s", err)
+				log.Infof("PATH: %s", path)
 				return nil
 			}
 			matches := instanceTfFileRegex.FindStringSubmatch(info.Name())
@@ -824,7 +826,8 @@ func (p *plugin) listCurrentTfFiles() (map[string]map[TResourceType]map[TResourc
 	err := fs.Walk(p.Dir,
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Debugf("Ignoring file %s due to error: %s", path, err)
+				log.Infof("Ignoring file due to error: %s", err)
+				log.Infof("PATH: %s", path)
 				return nil
 			}
 			matches := tfFileRegex.FindStringSubmatch(info.Name())
@@ -1086,7 +1089,8 @@ func (p *plugin) doDestroy(inst instance.ID, processAttach, executeTfApply bool)
 			err = fs.Walk(p.Dir,
 				func(path string, info os.FileInfo, err error) error {
 					if err != nil {
-						log.Debugf("Ignoring file %s due to error: %s", path, err)
+						log.Infof("Ignoring file due to error: %s", err)
+						log.Infof("PATH: %s", path)
 						return nil
 					}
 					matches := instanceTfFileRegex.FindStringSubmatch(info.Name())

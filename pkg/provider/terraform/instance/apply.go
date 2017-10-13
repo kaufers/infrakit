@@ -172,7 +172,8 @@ func (p *plugin) handleFiles(fns tfFuncs) error {
 	err = fs.Walk(p.Dir,
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Debugf("Ignoring file %s due to error: %s", path, err)
+				log.Infof("Ignoring file due to error: %s", err)
+				log.Infof("PATH: %s", path)
 				return nil
 			}
 			// Only the VM files are valid for pruning; once pruned then the group controller polling will
