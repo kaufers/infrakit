@@ -3592,11 +3592,13 @@ func TestWriteTfJSONFilesForImportMultipleFiles(t *testing.T) {
 
 func TestDetermineFinalPropsForImport(t *testing.T) {
 	specProps := TResourceProperties{
-		PropHostnamePrefix: "some-prefix",
-		PropScope:          "some-scope",
-		"ssh-key-ids":      []interface{}{789},
-		"datacenter":       "some-datacenter",
-		"z-other":          "not-imported",
+		PropHostnamePrefix:    "some-prefix",
+		PropScope:             "some-scope",
+		"ssh-key-ids":         []interface{}{789},
+		"datacenter":          "some-datacenter",
+		"z-other":             "not-imported",
+		"static-key":          "static-value",
+		"static-key-override": "static-value-override",
 	}
 	// Include tags
 	resourceProps := TResourceProperties{
@@ -3607,20 +3609,25 @@ func TestDetermineFinalPropsForImport(t *testing.T) {
 			"actual-tag1:actual-val1",
 			"actual-tag2:actual-val2",
 		},
-		"ip":         "10.0.0.1",
-		"z-imported": "imported-but-not-in-spec",
+		"ip":                  "10.0.0.1",
+		"z-imported":          "imported-but-not-in-spec",
+		"static-key-override": "static-value-original",
 	}
 	resType := VMIBMCloud
+	staticPropIDs := []string{"static-key", "static-key-override", "static-not-in-spec"}
 	res := ImportResource{
 		ResourceType:  &resType,
 		ResourceProps: resourceProps,
 		SpecProps:     specProps,
+		StaticPropIDs: &staticPropIDs,
 	}
 	determineFinalPropsForImport(&res)
 	expectedProps := TResourceProperties{
-		"hostname":    "actual-hostname",
-		"ssh-key-ids": []interface{}{123},
-		"datacenter":  "actual-datacenter",
+		"hostname":            "actual-hostname",
+		"ssh-key-ids":         []interface{}{123},
+		"datacenter":          "actual-datacenter",
+		"static-key":          "static-value",
+		"static-key-override": "static-value-override",
 		"tags": []interface{}{
 			"actual-tag1:actual-val1",
 			"actual-tag2:actual-val2",
@@ -3633,6 +3640,7 @@ func TestDetermineFinalPropsForImport(t *testing.T) {
 		ResourceType:  &resType,
 		ResourceProps: resourceProps,
 		SpecProps:     specProps,
+		StaticPropIDs: &staticPropIDs,
 	}
 	determineFinalPropsForImport(&res)
 	delete(expectedProps, "tags")

@@ -49,6 +49,9 @@ type ImportResourceOptions struct {
 
 	// ID of the resource to import
 	ResourceID string
+
+	// IDs of the properties to pull directly from the instance spec
+	StaticPropIDs []string
 }
 
 // Options capture the options for starting up the plugin.
@@ -121,10 +124,12 @@ func Run(plugins func() discovery.Plugins, name plugin.Name,
 		resType := terraform.TResourceType(importResource.ResourceType)
 		resName := terraform.TResourceName(importResource.ResourceName)
 		resID := importResource.ResourceID
+		staticPropIDs := importResource.StaticPropIDs
 		res := terraform.ImportResource{
-			ResourceType: &resType,
-			ResourceName: &resName,
-			ResourceID:   &resID,
+			ResourceType:  &resType,
+			ResourceName:  &resName,
+			ResourceID:    &resID,
+			StaticPropIDs: &staticPropIDs,
 		}
 		resources = append(resources, &res)
 	}

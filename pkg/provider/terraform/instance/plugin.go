@@ -78,6 +78,7 @@ type ImportResource struct {
 	ResourceID           *string
 	ResourceType         *TResourceType
 	ResourceName         *TResourceName      // Name of resource in the instance spec
+	StaticPropIDs        *[]string           // Property IDs to pull directly from the instance spec
 	ResourceProps        TResourceProperties // Populated via tf show
 	SpecProps            TResourceProperties // Parsed from instance spec
 	FinalProps           TResourceProperties // Properties for the tf.json.new file
@@ -1786,6 +1787,18 @@ func determineFinalPropsForImport(res *ImportResource) {
 	if _, has := finalProps["tags"]; !has {
 		if tags, has := res.ResourceProps["tags"]; has {
 			finalProps["tags"] = tags
+		}
+	}
+	// Always use the static properties from the instance spec
+	if res.StaticPropIDs != nil {
+		log.Infof("Using static properties for %v import: %v", string(*res.ResourceType), res.StaticPropIDs)
+		for _, k := range *res.StaticPropIDs {
+			v, has := res.SpecProps[k]
+			if !has {
+				log.Warningf("Terraform instance spec missing '%s' property, not setting", k)
+				continue
+			}
+			finalProps[k] = v
 		}
 	}
 	res.FinalProps = finalProps
