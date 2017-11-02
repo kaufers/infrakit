@@ -2261,12 +2261,12 @@ func TestMergeTagsIntoVMProps(t *testing.T) {
 
 func TestRenderInstVarsNoReplace(t *testing.T) {
 	props := TResourceProperties{}
-	err := renderInstVars(&props, "id", nil, "")
+	err := renderInstVars(&props, "id", nil, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, TResourceProperties{}, props)
 
 	logicalID := instance.LogicalID("mgr1")
-	err = renderInstVars(&props, "id", &logicalID, "")
+	err = renderInstVars(&props, "id", &logicalID, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, TResourceProperties{}, props)
 }
@@ -2280,12 +2280,12 @@ func TestRenderInstVarsWithoutOptional(t *testing.T) {
 		"id":  "id",
 		"key": "val",
 	}
-	err := renderInstVars(&props, "id", nil, "")
+	err := renderInstVars(&props, "id", nil, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, expected, props)
 
 	logicalID := instance.LogicalID("mgr1")
-	err = renderInstVars(&props, "id", &logicalID, "some-attach-id")
+	err = renderInstVars(&props, "id", &logicalID, "some-attach-id", nil)
 	require.NoError(t, err)
 	require.Equal(t, expected, props)
 }
@@ -2304,7 +2304,33 @@ func TestRenderInstVarsWithOptional(t *testing.T) {
 		"key":       "val",
 	}
 	logicalID := instance.LogicalID("mgr1")
-	err := renderInstVars(&props, "id", &logicalID, "some-attach-id")
+	err := renderInstVars(&props, "id", &logicalID, "some-attach-id", nil)
+	require.NoError(t, err)
+	require.Equal(t, expected, props)
+}
+
+func TestRenderInstVarsEnvs(t *testing.T) {
+	props := TResourceProperties{
+		"id":  "{{ var `/self/instId` }}",
+		"key": "val",
+		"from-env-var-not-defined": "{{ var `/self/env/foo`}}",
+		"from-env-var1":            "{{ var `/self/env/env1`}}",
+		"from-env-var4":            "{{ var `/self/env/env4`}}",
+	}
+	expected := TResourceProperties{
+		"id":  "id",
+		"key": "val",
+		"from-env-var-not-defined": "<no value>",
+		"from-env-var1":            "env1-val",
+		"from-env-var4":            "foo=bar",
+	}
+	envs := []string{"env1=env1-val", "env2=anything", "env3", "env4=foo=bar", ""}
+	err := renderInstVars(&props, "id", nil, "", envs)
+	require.NoError(t, err)
+	require.Equal(t, expected, props)
+
+	logicalID := instance.LogicalID("mgr1")
+	err = renderInstVars(&props, "id", &logicalID, "some-attach-id", nil)
 	require.NoError(t, err)
 	require.Equal(t, expected, props)
 }

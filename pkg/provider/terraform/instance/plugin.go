@@ -501,8 +501,9 @@ func mergeInitScript(spec instance.Spec, id instance.ID, vmType TResourceType, p
 }
 
 // renderInstVars applies the "/self/instId", "/self/logicalId", and "/self/dedicated/attachId" variables
-// as global options on the input properties
-func renderInstVars(props *TResourceProperties, id instance.ID, logicalID *instance.LogicalID, dedicatedAttachKey string) error {
+// as global options on the input properties. The env vars also become global options in the form of
+// "/self/env/<env_var>"
+func renderInstVars(props *TResourceProperties, id instance.ID, logicalID *instance.LogicalID, dedicatedAttachKey string, envs []string) error {
 	data, err := json.Marshal(props)
 	if err != nil {
 		return err
@@ -519,6 +520,14 @@ func renderInstVars(props *TResourceProperties, id instance.ID, logicalID *insta
 	}
 	if dedicatedAttachKey != "" {
 		t = t.Global("/self/dedicated/attachId", dedicatedAttachKey)
+	}
+	// Handle env vars generically, each supplied value is a template var in the form
+	// of "/self/env/<env_var>=<env_var_val>"
+	for _, env := range envs {
+		if strings.Contains(env, "=") {
+			split := strings.SplitN(env, "=", 2)
+			t = t.Global(fmt.Sprintf("/self/env/%s", split[0]), split[1])
+		}
 	}
 	result, err := t.Render(nil)
 	if err != nil {
@@ -988,7 +997,7 @@ func (p *plugin) Provision(spec instance.Spec) (*instance.ID, error) {
 		return nil, err
 	}
 	// Render any instance specific variables
-	if err = renderInstVars(&vmProps, id, spec.LogicalID, decomposedFiles.DedicatedAttachKey); err != nil {
+	if err = renderInstVars(&vmProps, id, spec.LogicalID, decomposedFiles.DedicatedAttachKey, p.envs); err != nil {
 		return nil, err
 	}
 	// Handle any platform specific updates to the VM properties prior to writing out
