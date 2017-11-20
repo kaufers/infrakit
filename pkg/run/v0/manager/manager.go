@@ -14,6 +14,7 @@ import (
 	"github.com/docker/infrakit/pkg/run"
 	"github.com/docker/infrakit/pkg/run/local"
 	"github.com/docker/infrakit/pkg/run/scope"
+	"github.com/docker/infrakit/pkg/template"
 	"github.com/docker/infrakit/pkg/types"
 )
 
@@ -207,8 +208,18 @@ func Run(scope scope.Scope, name plugin.Name,
 
 	if options.Mux != nil {
 
-		log.Info("Starting mux server", "listen", options.Mux.Listen, "advertise", options.Mux.Advertise)
-		muxServer, err = mux.NewServer(options.Mux.Listen, options.Mux.Advertise, options.Plugins,
+		// Advertise value supports templating
+		advertise := options.Mux.Advertise
+		if t, err := scope.TemplateEngine(advertise, template.Options{MultiPass: false}); err == nil {
+			// No error, assume that the value is a template URL
+			if advertise, err = t.Render(nil); err != nil {
+				fmt.Printf("Cannot start up mux server, advertise template '%v' rendering failed: %v\n", t, err)
+				os.Exit(-1)
+			}
+		}
+
+		log.Info("Starting mux server", "listen", options.Mux.Listen, "advertise", advertise)
+		muxServer, err = mux.NewServer(options.Mux.Listen, advertise, options.Plugins,
 			mux.Options{
 				Leadership: options.Leader.Receive(),
 				Registry:   options.LeaderStore,
