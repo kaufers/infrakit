@@ -533,6 +533,7 @@ func TestTerraformShowParseResultTagsList(t *testing.T) {
 		bytes.NewBuffer(terraformShowOutput),
 	)
 	require.NoError(t, err)
+	require.Len(t, found, 1)
 	require.Equal(t, expected, found[TResourceType("ibm_compute_vm_instance")][TResourceName("instance-1499827079")])
 
 	// Also verify single instance output
@@ -560,7 +561,31 @@ func TestTerraformShowParseResultTagsListWithFilters(t *testing.T) {
 			"swarm-id:c80s4c4kq0kgjs64ojxzvsdjz",
 		},
 	}
+	require.Len(t, found, 1)
 	require.Equal(t, expected, found[TResourceType("ibm_compute_vm_instance")][TResourceName("instance-1499827079")])
+}
+
+func TestTerraformShowParseResultTagsListWithoutResourceFilters(t *testing.T) {
+	found, err := parseTerraformShowOutput(
+		[]TResourceType{},
+		[]string{},
+		bytes.NewBuffer(terraformShowOutput),
+	)
+	require.NoError(t, err)
+	// Verify all resource types returned
+	expectedTypeNames := make(map[TResourceType]TResourceName)
+	expectedTypeNames[TResourceType("aws_internet_gateway")] = TResourceName("default")
+	expectedTypeNames[TResourceType("aws_route")] = TResourceName("internet_access")
+	expectedTypeNames[TResourceType("aws_security_group")] = TResourceName("default")
+	expectedTypeNames[TResourceType("aws_subnet")] = TResourceName("default")
+	expectedTypeNames[TResourceType("ibm_compute_vm_instance")] = TResourceName("instance-1499827079")
+	expectedTypeNames[TResourceType("aws_vpc")] = TResourceName("default")
+	for resType, resName := range expectedTypeNames {
+		require.Contains(t, found, resType)
+		require.Contains(t, found[resType], resName)
+		require.Len(t, found[resType], 1)
+	}
+	require.Len(t, expectedTypeNames, len(found))
 }
 
 func TestTerraformShowParseResultAwsVpc(t *testing.T) {

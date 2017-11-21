@@ -80,7 +80,8 @@ var mapRegex = regexp.MustCompile("^([^.]+)\\.%")
 // set -o xtrace
 // apt-get -y update
 func parseTerraformShowOutput(resTypes []TResourceType, propFilter []string, input io.Reader) (map[TResourceType]map[TResourceName]TResourceProperties, error) {
-	// Convert types to map for filtering on resource types
+	// Convert types to map for filtering on resource types, a 0-length
+	// filter means that no filtering is done
 	resTypeFilter := make(map[TResourceType]struct{}, len(resTypes))
 	for _, resType := range resTypes {
 		resTypeFilter[resType] = struct{}{}
@@ -102,9 +103,11 @@ func parseTerraformShowOutput(resTypes []TResourceType, propFilter []string, inp
 		if m != nil && len(m[0][1]) > 0 && len(m[0][2]) > 0 {
 			// Line is for a new resource, verify supported type
 			resType := TResourceType(m[0][1])
-			if _, has := resTypeFilter[resType]; !has {
-				props = nil
-				continue
+			if len(resTypeFilter) > 0 {
+				if _, has := resTypeFilter[resType]; !has {
+					props = nil
+					continue
+				}
 			}
 			resourceName := TResourceName(m[0][2])
 			var resNamePropMap map[TResourceName]TResourceProperties
