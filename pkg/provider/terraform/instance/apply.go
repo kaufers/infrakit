@@ -59,7 +59,11 @@ func (p *plugin) terraformApply() error {
 							InheritEnvs(true).
 							WithEnvs(p.envs...).
 							WithDir(p.Dir)
-						if err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start(); err != nil {
+						err := command.StartWithHandlers(
+							nil,
+							getCommandExecStreamEater("terraformRefresh", true, ""),
+							getCommandExecStreamEater("terraformRefresh", false, ""))
+						if err != nil {
 							return err
 						}
 						return command.Wait()
@@ -124,11 +128,14 @@ func (p *plugin) doTerraformApply() error {
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start()
-	if err == nil {
-		return command.Wait()
+	err := command.StartWithHandlers(
+		nil,
+		getCommandExecStreamEater("doTerraformApply", true, "Still creating"),
+		getCommandExecStreamEater("doTerraformApply", false, "Still creating"))
+	if err != nil {
+		return err
 	}
-	return err
+	return command.Wait()
 }
 
 // shouldApply returns true if "terraform apply" should execute; this happens if
@@ -503,7 +510,7 @@ func (p *plugin) doTerraformStateList() (map[TResourceType]map[TResourceName]str
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	command.StartWithHandlers(
+	err := command.StartWithHandlers(
 		nil,
 		func(r io.Reader) error {
 			reader := bufio.NewReader(r)
@@ -530,8 +537,9 @@ func (p *plugin) doTerraformStateList() (map[TResourceType]map[TResourceName]str
 			}
 			return nil
 		},
-		nil)
-
-	err := command.Wait()
-	return result, err
+		getCommandExecStreamEater("doTerraformStateList", false, ""))
+	if err != nil {
+		return nil, err
+	}
+	return result, command.Wait()
 }

@@ -285,15 +285,17 @@ func (p *plugin) doTerraformShow(resTypes []TResourceType,
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	command.StartWithHandlers(
+	err = command.StartWithHandlers(
 		nil,
 		func(r io.Reader) error {
 			found, err := parseTerraformShowOutput(resTypes, propFilter, r)
 			result = found
 			return err
 		},
-		nil)
-
+		getCommandExecStreamEater("doTerraformShow", true, ""))
+	if err != nil {
+		return
+	}
 	err = command.Wait()
 	return
 }
@@ -305,15 +307,17 @@ func (p *plugin) doTerraformShowForInstance(instance string) (result TResourcePr
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	command.StartWithHandlers(
+	err = command.StartWithHandlers(
 		nil,
 		func(r io.Reader) error {
 			props, err := parseTerraformShowForInstanceOutput(r)
 			result = props
 			return err
 		},
-		nil)
-
+		getCommandExecStreamEater("doTerraformShowForInstance", true, ""))
+	if err != nil {
+		return
+	}
 	err = command.Wait()
 	return
 }

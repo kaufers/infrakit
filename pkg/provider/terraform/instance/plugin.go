@@ -1,9 +1,11 @@
 package instance
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -1490,10 +1492,14 @@ func (p *plugin) cleanupFailedImport(vmType TResourceType, vmName string) {
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start()
-	if err == nil {
-		command.Wait()
+	err := command.StartWithHandlers(
+		nil,
+		getCommandExecStreamEater("cleanupFailedImport", true, ""),
+		getCommandExecStreamEater("cleanupFailedImport", false, ""))
+	if err != nil {
+		return
 	}
+	command.Wait()
 }
 
 // writeTfJSONFilesForImport writes out the final tf.json[.new] file by grouping all
@@ -1793,8 +1799,42 @@ func (p *plugin) doTerraformImport(resType TResourceType, resName, id string) er
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	if err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start(); err != nil {
+	err := command.StartWithHandlers(
+		nil,
+		getCommandExecStreamEater("doTerraformImport", true, ""),
+		getCommandExecStreamEater("doTerraformImport", false, ""))
+	if err != nil {
 		return err
 	}
 	return command.Wait()
+}
+
+// getCommandExecStreamEater returns a function that logs the command output to at either
+// Info (if stdout == true) or Error (if stdout == false). All output is batched together
+// until the "sep" string is encountered or the stream ends.
+func getCommandExecStreamEater(funcName string, stdout bool, sep string) func(r io.Reader) error {
+	return func(r io.Reader) error {
+		reader := bufio.NewReader(r)
+		logFn := logger.Info
+		if !stdout {
+			logFn = logger.Error
+		}
+		lines := []string{}
+		for {
+			b, _, err := reader.ReadLine()
+			if err != nil {
+				break
+			}
+			line := string(b)
+			lines = append(lines, line)
+			if sep != "" && strings.Contains(line, sep) {
+				logFn(funcName, "cmd-output", strings.Join(lines, "\n"))
+				lines = []string{}
+			}
+		}
+		if len(lines) > 0 {
+			logFn(funcName, "cmd-output", strings.Join(lines, "\n"))
+		}
+		return nil
+	}
 }
