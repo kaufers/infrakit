@@ -123,12 +123,24 @@ func (p *plugin) terraformApply() error {
 
 // doTerraformApply executes "terraform apply"
 func (p *plugin) doTerraformApply() error {
+	logger.Info("doTerraformApply", "msg", "Showing plan")
+	c2 := exec.Command("terraform plan -refresh=false").
+		InheritEnvs(true).
+		WithEnvs(p.envs...).
+		WithDir(p.Dir)
+	err := c2.WithStdout(os.Stdout).WithStderr(os.Stdout).Start()
+	if err == nil {
+		err = c2.Wait()
+	}
+	if err != nil {
+		return err
+	}
 	logger.Info("doTerraformApply", "msg", "Applying plan")
 	command := exec.Command("terraform apply -refresh=false -no-color").
 		InheritEnvs(true).
 		WithEnvs(p.envs...).
 		WithDir(p.Dir)
-	err := command.StartWithHandlers(
+	err = command.StartWithHandlers(
 		nil,
 		getCommandExecStreamEater("doTerraformApply", true, "Still creating"),
 		getCommandExecStreamEater("doTerraformApply", false, "Still creating"))
@@ -437,7 +449,7 @@ func (p *plugin) handleFilePruning(
 			}
 		}
 	}
-	logger.Info("handleFilePruning", "msg", fmt.Sprintf("Pruning %v tf.json files", len(prunes)))
+	logger.Info("handleFilePruning", "msg", fmt.Sprintf("Pruning %v tf.json files", len(pruneFiles)))
 	for file := range pruneFiles {
 		path := filepath.Join(p.Dir, file)
 		logger.Info("handleFilePruning", "msg", fmt.Sprintf("Pruning file: %v", file))

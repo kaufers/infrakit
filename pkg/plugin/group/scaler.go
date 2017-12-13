@@ -232,7 +232,11 @@ func (s *scaler) converge() {
 		return
 	}
 
-	log.Debug("Found existing instances", "descriptions", descriptions, "V", debugV)
+	ids := []instance.ID{}
+	for _, r := range descriptions {
+		ids = append(ids, r.ID)
+	}
+	log.Info("Found existing instances", "ids", ids, "V", debugV)
 
 	grp := sync.WaitGroup{}
 
@@ -244,7 +248,7 @@ func (s *scaler) converge() {
 
 	case actualSize > desiredSize:
 		remove := actualSize - desiredSize
-		log.Info("Removing instances", "remove", remove, "desired", desiredSize)
+		log.Info("Removing instances", "actualSize", actualSize, "remove", remove, "desired", desiredSize)
 
 		sorted := make([]instance.Description, len(descriptions))
 		copy(sorted, descriptions)
@@ -266,7 +270,7 @@ func (s *scaler) converge() {
 
 	case actualSize < desiredSize:
 		add := desiredSize - actualSize
-		log.Info("Adding instances to group", "add", add, "desired", desiredSize)
+		log.Info("Adding instances to group", "actualSize", actualSize, "add", add, "desired", desiredSize)
 
 		for i := 0; i < int(add); i++ {
 			grp.Add(1)

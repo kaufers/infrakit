@@ -804,6 +804,7 @@ func (p *plugin) writeTerraformFiles(fileMap map[string]*TFormat, currentFiles m
 		} else {
 			path = filepath.Join(p.Dir, filename+".tf.json.new")
 		}
+		logger.Info("writeTerraformFiles", "file", path)
 		logger.Debug("writeTerraformFiles", "file", path, "data", string(buff), "V", debugV1)
 		paths = append(paths, path)
 		err := afero.WriteFile(p.fs, path, buff, 0644)
@@ -956,6 +957,7 @@ func (p *plugin) Provision(spec instance.Spec) (*instance.ID, error) {
 	defer p.fsLock.Unlock()
 	name := ensureUniqueFile(p.Dir)
 	id := instance.ID(name)
+	logger.Info("Provision", "instance-id", name)
 
 	// Decode the given spec and find the VM resource
 	tf := TFormat{}
@@ -1143,7 +1145,7 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
-	logger.Debug("DescribeInstances", "tags", tags, "V", debugV1)
+	logger.Info("DescribeInstances", "tags", tags, "V", debugV1)
 	// Acquire lock since we are reading all files and potentially running "terraform show"
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
@@ -1208,7 +1210,11 @@ func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]i
 		}
 
 	}
-	logger.Debug("DescribeInstances", "result", result, "V", debugV1)
+	ids := []instance.ID{}
+	for _, r := range result {
+		ids = append(ids, r.ID)
+	}
+	logger.Info("DescribeInstances", "result", ids, "V", debugV1)
 	return result, nil
 }
 
