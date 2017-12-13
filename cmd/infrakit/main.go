@@ -174,6 +174,11 @@ func main() {
 	// Help template includes the usage string, which is configure below
 	cmd.SetHelpTemplate(helpTemplate)
 	cmd.SetUsageTemplate(usageTemplate)
+	cmd.SetUsageFunc(func(c *cobra.Command) error {
+		log.Crit("USAGE ERROR")
+		os.Exit(1)
+		return nil
+	})
 
 	// The 'stack' subcommand has its Use (verb) that is set to the
 	// value of the INFRAKIT_HOST env variable.  This allows us to
