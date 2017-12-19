@@ -377,12 +377,10 @@ func (m *manager) onAssumeLeadership() (err error) {
 	}()
 
 	err = m.loadMetadata()
-	if err != nil {
-		log.Error("error loading metadata", "err", err)
-	}
+	log.Error("Loading metadata", "err", err)
 
 	err = m.loadAndCommitSpecs()
-	log.Debug("Loading and committing specs", "err", err)
+	log.Info("Loading and committing specs", "err", err)
 
 	if err != nil && m.Options.LeaderCommitSpecsRetries > 0 {
 

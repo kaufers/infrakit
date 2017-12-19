@@ -369,6 +369,13 @@ func (p *plugin) Validate(req *types.Any) error {
 
 // scanLocalFiles reads the filesystem and loads all tf.json and tf.json.new files
 func (p *plugin) scanLocalFiles() (map[TResourceType]map[TResourceName]TResourceProperties, error) {
+	token := time.Now().Unix()
+	start := time.Now()
+	logger.Info("scanLocalFiles", "tf-token", token, "msg", "WAIT-FOR-LOCK-TF")
+	// Acquire lock since we are reading all files and potentially running "terraform show"
+	p.fsLock.Lock()
+	defer p.fsLock.Unlock()
+	logger.Info("scanLocalFiles", "tf-token", token, "msg", "ACQUIRE-LOCK-TF")
 
 	vms := map[TResourceType]map[TResourceName]TResourceProperties{}
 
@@ -404,6 +411,15 @@ func (p *plugin) scanLocalFiles() (map[TResourceType]map[TResourceName]TResource
 			}
 			return nil
 		})
+
+	delta := time.Now().Sub(start)
+	logFn := logger.Info
+	if delta.Seconds() > time.Duration.Seconds(5) {
+		logFn = logger.Warn
+	} else if delta.Seconds() > time.Duration.Seconds(10) {
+		logFn = logger.Error
+	}
+	logFn("scanLocalFiles", "tf-token", token, "duration", delta, "msg", "RELEASE-LOCK-TF")
 	return vms, err
 }
 
@@ -1139,10 +1155,9 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
-	logger.Debug("DescribeInstances", "tags", tags, "V", debugV1)
-	// Acquire lock since we are reading all files and potentially running "terraform show"
-	p.fsLock.Lock()
-	defer p.fsLock.Unlock()
+	token := time.Now().Unix()
+	start := time.Now()
+	logger.Info("DescribeInstances", "tags", tags, "tf-token", token, "properties", properties, "msg", "ENTERING")
 
 	// localSpecs are what we told terraform to create - these are the generated files.
 	localSpecs, err := p.scanLocalFiles()
@@ -1154,7 +1169,7 @@ func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]i
 	if properties {
 		// TODO - not the most efficient, but here we assume we're usually just one vm type
 		for vmResourceType := range localSpecs {
-
+			logger.Info("DescribeInstances", "resType", vmResourceType, "tf-token", token, "properties", properties, "msg", "CALLING-TF-SHOW")
 			if result, err := p.doTerraformShow([]TResourceType{vmResourceType}, nil); err == nil {
 				terraformShowResult = result
 			} else {
@@ -1202,9 +1217,17 @@ func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]i
 				}
 			}
 		}
-
 	}
-	logger.Debug("DescribeInstances", "result", result, "V", debugV1)
+
+	delta := time.Now().Sub(start)
+	logFn := logger.Info
+	if delta.Seconds() > time.Duration.Seconds(5) {
+		logFn = logger.Warn
+	} else if delta.Seconds() > time.Duration.Seconds(10) {
+		logFn = logger.Error
+	}
+	logFn("DescribeInstances", "len", len(result), "token", token, "duration", delta, "msg", "EXITING")
+	//logger.Debug("DescribeInstances", "result", result, "V", debugV1)
 	return result, nil
 }
 
