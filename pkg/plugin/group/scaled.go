@@ -3,6 +3,7 @@ package group
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/docker/infrakit/pkg/spi/flavor"
 	"github.com/docker/infrakit/pkg/spi/group"
@@ -139,6 +140,9 @@ func (s *scaledGroup) List() ([]instance.Description, error) {
 
 	list := []instance.Description{}
 
+	token := time.Now().Unix()
+	start := time.Now()
+	log.Info("List", "tags", s.memberTags, "token", token, "msg", "PRE-DESCRIBE")
 	found, err := settings.instancePlugin.DescribeInstances(s.memberTags, true)
 	if err != nil {
 		return list, err
@@ -156,6 +160,8 @@ func (s *scaledGroup) List() ([]instance.Description, error) {
 
 		list = append(list, d)
 	}
+	delta := time.Now().Sub(start)
+	log.Info("List", "len", len(list), "token", token, "duration", delta, "msg", "POST-DESCRIBE")
 	return list, nil
 }
 

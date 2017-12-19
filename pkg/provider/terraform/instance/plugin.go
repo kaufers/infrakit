@@ -1139,10 +1139,13 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
-	logger.Debug("DescribeInstances", "tags", tags, "V", debugV1)
+	token := time.Now().Unix()
+	start := time.Now()
+	logger.Info("DescribeInstances", "tags", tags, "token", token, "properties", properties, "msg", "WAIT-FOR-LOCK-TF")
 	// Acquire lock since we are reading all files and potentially running "terraform show"
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	logger.Info("DescribeInstances", "tags", tags, "token", token, "properties", properties, "msg", "ACQUIRE-LOCK-TF")
 
 	// localSpecs are what we told terraform to create - these are the generated files.
 	localSpecs, err := p.scanLocalFiles()
@@ -1202,9 +1205,11 @@ func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]i
 				}
 			}
 		}
-
 	}
-	logger.Debug("DescribeInstances", "result", result, "V", debugV1)
+
+	delta := time.Now().Sub(start)
+	logger.Info("DescribeInstances", "len", len(result), "token", token, "duration", delta, "msg", "RELEASE-LOCK-TF")
+	//logger.Debug("DescribeInstances", "result", result, "V", debugV1)
 	return result, nil
 }
 

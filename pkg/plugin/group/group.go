@@ -151,8 +151,12 @@ func (p *plugin) FreeGroup(id group.ID) error {
 }
 
 func (p *plugin) DescribeGroup(id group.ID) (group.Description, error) {
+	token := time.Now().Unix()
+	start := time.Now()
+	log.Info("DescribeGroup", "token", token, "msg", "WAIT-FOR-LOCK-GROUP")
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	log.Info("DescribeGroup", "token", token, "msg", "ACQUIRE-LOCK-GROUP")
 
 	// TODO(wfarner): Include details about any in-flight updates.
 
@@ -166,6 +170,8 @@ func (p *plugin) DescribeGroup(id group.ID) (group.Description, error) {
 		return group.Description{}, err
 	}
 
+	delta := time.Now().Sub(start)
+	log.Info("DescribeGroup", "len", len(instances), "token", token, "duration", delta, "msg", "RELEASE-LOCK-GROUP")
 	return group.Description{Instances: instances, Converged: !context.updating()}, nil
 }
 
