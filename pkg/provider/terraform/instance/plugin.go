@@ -84,6 +84,7 @@ type plugin struct {
 	pluginLookup    func() discovery.Plugins
 	envs            []string
 	cachedInstances *[]instance.Description
+	idCache         map[TResourceName]string
 }
 
 // ImportResource defines a resource that should be imported
@@ -139,6 +140,7 @@ func NewTerraformInstancePlugin(options terraform_types.Options, importOpts *Imp
 		pollInterval: options.PollInterval.Duration(),
 		pluginLookup: pluginLookup,
 		envs:         envs,
+		idCache:      map[TResourceName]string{},
 	}
 	if err := p.processImport(importOpts); err != nil {
 		panic(err)
@@ -1147,13 +1149,15 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 
 // External functions using during describe; broken out for testing
 type describeFns struct {
-	tfShow func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
+	tfShow              func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
+	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error)
 }
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
 	fns := describeFns{
-		tfShow: p.doTerraformShow,
+		tfShow:              p.doTerraformShow,
+		getExistingResource: p.getExistingResource,
 	}
 	return p.doDescribeInstances(fns, tags, properties)
 }
@@ -1214,7 +1218,7 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 	if p.cachedInstances != nil {
 		return
 	}
-
+	logger.Info("SRK - refreshNilInstanceCache")
 	// currentFileData are what we told terraform to create - these are the generated files.
 	currentFileData, err := p.listCurrentTfFiles()
 	if err != nil {
@@ -1259,17 +1263,44 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 					continue
 				}
 				id := matches[2]
+				// Parse the tags from the file
+				fileTags := parseTerraformTags(resType, resProps)
 				inst := instance.Description{
-					Tags:      parseTerraformTags(resType, resProps),
+					Tags:      fileTags,
 					ID:        instance.ID(id),
 					LogicalID: terraformLogicalID(resProps),
 				}
-
 				// And the properties from either the tf show output or the file data
 				instProps := resProps
 				if vms, has := terraformShowResult[resType]; has {
 					if details, has := vms[resName]; has {
 						instProps = details
+					}
+				}
+				// Ensure that there is an id, terraform will not write out the state file until after
+				// the provision is complete. We can query the backend using the unique instance tags.
+				if _, has := instProps["id"]; has {
+					// Clear cache
+					delete(p.idCache, resName)
+				} else {
+					var id *string
+					// Check cache
+					if idVal, has := p.idCache[resName]; has {
+						id = &idVal
+					} else {
+						// Retrieve and update cache, use the tags from the file
+						if idVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
+							if idVal != nil {
+								id = idVal
+								p.idCache[resName] = *id
+								logger.Info("doDescribeInstances", "msg", fmt.Sprintf("Cached id %v for %v", *idVal, resName))
+							}
+						} else {
+							logger.Warn("doDescribeInstances", "msg", "Failed to determine existing resource", "error", err)
+						}
+					}
+					if id != nil {
+						instProps["id"] = *id
 					}
 				}
 				if encoded, err := types.AnyValue(instProps); err != nil {

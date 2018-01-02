@@ -25,6 +25,9 @@ var (
 		tfShow: func(resTypes []TResourceType, propFilter []string) (result map[TResourceType]map[TResourceName]TResourceProperties, err error) {
 			return map[TResourceType]map[TResourceName]TResourceProperties{}, nil
 		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+			return nil, nil
+		},
 	}
 )
 
@@ -5157,6 +5160,9 @@ func TestDoDescribeInstancesShowError(t *testing.T) {
 			require.Nil(t, propFilter)
 			return nil, fmt.Errorf("Custom show error")
 		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+			return nil, nil
+		},
 	}
 
 	_, err = tf.doDescribeInstances(fns, map[string]string{}, true)
@@ -5197,8 +5203,8 @@ func TestDoDescribeInstancesProperties(t *testing.T) {
 			require.Nil(t, propFilter)
 			result := map[TResourceType]map[TResourceName]TResourceProperties{
 				VMIBMCloud: {
-					TResourceName(id1): TResourceProperties{"k1": "v1", "tags": tag1},
-					TResourceName(id2): TResourceProperties{"k2": "v2", "tags": tag2},
+					TResourceName(id1): TResourceProperties{"id": "id1", "k1": "v1", "tags": tag1},
+					TResourceName(id2): TResourceProperties{"id": "id2", "k2": "v2", "tags": tag2},
 				},
 			}
 			return result, nil
@@ -5206,9 +5212,9 @@ func TestDoDescribeInstancesProperties(t *testing.T) {
 	}
 
 	// Expected results
-	props1, err := types.AnyValue(TResourceProperties{"k1": "v1", "tags": tag1})
+	props1, err := types.AnyValue(TResourceProperties{"id": "id1", "k1": "v1", "tags": tag1})
 	require.NoError(t, err)
-	props2, err := types.AnyValue(TResourceProperties{"k2": "v2", "tags": tag2})
+	props2, err := types.AnyValue(TResourceProperties{"id": "id2", "k2": "v2", "tags": tag2})
 	require.NoError(t, err)
 	instDesc1 := instance.Description{
 		Tags:       map[string]string{"common": "val", "tag1": "val1"},
@@ -5237,6 +5243,7 @@ func TestDoDescribeInstancesProperties(t *testing.T) {
 	require.Len(t, result, 2)
 	require.Contains(t, result, instDesc1)
 	require.Contains(t, result, instDesc2)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
 
 	// No tag filter, no props
 	result, err = tf.doDescribeInstances(fns, map[string]string{}, false)
@@ -5258,21 +5265,188 @@ func TestDoDescribeInstancesProperties(t *testing.T) {
 	require.Len(t, result, 2)
 	require.Contains(t, result, instDesc1)
 	require.Contains(t, result, instDesc2)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
 
 	// Tag1 only filter
 	result, err = tf.doDescribeInstances(fns, map[string]string{"tag1": "val1"}, true)
 	require.NoError(t, err)
 	require.Equal(t, []instance.Description{instDesc1}, result)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
 
 	// Tag2 only filter
 	result, err = tf.doDescribeInstances(fns, map[string]string{"tag2": "val2"}, true)
 	require.NoError(t, err)
 	require.Equal(t, []instance.Description{instDesc2}, result)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
 
 	// No matching tags
 	result, err = tf.doDescribeInstances(fns, map[string]string{"tag1": "bogus"}, true)
 	require.NoError(t, err)
 	require.Equal(t, []instance.Description{}, result)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
+}
+
+func TestDoDescribeMissingID(t *testing.T) {
+	tf, dir := getPlugin(t)
+	defer os.RemoveAll(dir)
+
+	// Write files without an ID, the ID will be retrieved from the backend
+	id1 := "instance-1"
+	id2 := "instance-2"
+	id3 := "instance-3"
+	tag1 := []interface{}{"common:val", "tag1:val1"}
+	tag2 := []interface{}{"common:val", "tag2:val2"}
+	tag3 := []interface{}{"common:val", "tag3:val3"}
+	props1 := TResourceProperties{"fileProp1": "fp1", "tags": tag1}
+	props2 := TResourceProperties{"fileProp2": "fp2", "tags": tag2}
+	props3 := TResourceProperties{"fileProp3": "fp3", "tags": tag3}
+
+	inst1 := map[TResourceType]map[TResourceName]TResourceProperties{
+		VMIBMCloud: map[TResourceName]TResourceProperties{
+			TResourceName(id1): props1,
+		},
+	}
+	err := writeFile(tf, fmt.Sprintf("%v.tf.json", id1), TFormat{Resource: inst1})
+	require.NoError(t, err)
+
+	inst2 := map[TResourceType]map[TResourceName]TResourceProperties{
+		VMIBMCloud: map[TResourceName]TResourceProperties{
+			TResourceName(id2): props2,
+		},
+	}
+	err = writeFile(tf, fmt.Sprintf("%v.tf.json", id2), TFormat{Resource: inst2})
+	require.NoError(t, err)
+
+	inst3 := map[TResourceType]map[TResourceName]TResourceProperties{
+		VMIBMCloud: map[TResourceName]TResourceProperties{
+			TResourceName(id3): props3,
+		},
+	}
+	err = writeFile(tf, fmt.Sprintf("%v.tf.json", id3), TFormat{Resource: inst3})
+	require.NoError(t, err)
+
+	fns := describeFns{
+		tfShow: func(types []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error) {
+			require.Equal(t, []TResourceType{VMIBMCloud}, types)
+			require.Nil(t, propFilter)
+			result := map[TResourceType]map[TResourceName]TResourceProperties{
+				VMIBMCloud: {
+					TResourceName(id1): TResourceProperties{"fileProp1": "fp1", "k1": "v1", "tags": tag1},
+					TResourceName(id2): TResourceProperties{"fileProp2": "fp2", "k2": "v2", "tags": tag2},
+					TResourceName(id3): TResourceProperties{"fileProp3": "fp3", "k3": "v3", "tags": tag3},
+				},
+			}
+			return result, nil
+		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+			require.Equal(t, VMIBMCloud, resType)
+			if resName == TResourceName(id1) {
+				require.Equal(t, props1, props)
+				id := "id1"
+				return &id, nil
+			}
+			if resName == TResourceName(id2) {
+				require.Equal(t, props2, props)
+				return nil, nil
+			}
+			return nil, fmt.Errorf("error for resource 3")
+		},
+	}
+
+	// Expected results, ID value returned for instance 1 only
+	propsAny1, err := types.AnyValue(TResourceProperties{"fileProp1": "fp1", "id": "id1", "k1": "v1", "tags": tag1})
+	require.NoError(t, err)
+	propsAny2, err := types.AnyValue(TResourceProperties{"fileProp2": "fp2", "k2": "v2", "tags": tag2})
+	require.NoError(t, err)
+	propsAny3, err := types.AnyValue(TResourceProperties{"fileProp3": "fp3", "k3": "v3", "tags": tag3})
+	require.NoError(t, err)
+	instDesc1 := instance.Description{
+		Tags:       map[string]string{"common": "val", "tag1": "val1"},
+		ID:         instance.ID(id1),
+		Properties: propsAny1,
+	}
+	instDesc2 := instance.Description{
+		Tags:       map[string]string{"common": "val", "tag2": "val2"},
+		ID:         instance.ID(id2),
+		Properties: propsAny2,
+	}
+	instDesc3 := instance.Description{
+		Tags:       map[string]string{"common": "val", "tag3": "val3"},
+		ID:         instance.ID(id3),
+		Properties: propsAny3,
+	}
+
+	result, err := tf.doDescribeInstances(fns, map[string]string{}, true)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+	require.Contains(t, result, instDesc1)
+	require.Contains(t, result, instDesc2)
+	require.Contains(t, result, instDesc3)
+
+	// Should be a single item in the ID cache
+	require.Equal(t,
+		map[TResourceName]string{TResourceName(id1): "id1"},
+		tf.idCache)
+
+	// Now get the 2nd ID from the backend (1st should still be cached)
+	tf.clearCachedInstances()
+	propsAny2, err = types.AnyValue(TResourceProperties{"fileProp2": "fp2", "id": "id2", "k2": "v2", "tags": tag2})
+	require.NoError(t, err)
+	instDesc2.Properties = propsAny2
+	fns.getExistingResource = func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+		require.Equal(t, VMIBMCloud, resType)
+		if resName == TResourceName(id1) {
+			require.Equal(t, props1, props)
+			id := "id1"
+			return &id, nil
+		}
+		if resName == TResourceName(id2) {
+			require.Equal(t, props2, props)
+			id := "id2"
+			return &id, nil
+		}
+		return nil, fmt.Errorf("error for resource 3")
+	}
+	result, err = tf.doDescribeInstances(fns, map[string]string{}, true)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+	require.Contains(t, result, instDesc1)
+	require.Contains(t, result, instDesc2)
+	require.Contains(t, result, instDesc3)
+	require.Equal(t,
+		map[TResourceName]string{TResourceName(id1): "id1", TResourceName(id2): "id2"},
+		tf.idCache)
+
+	// And now update the show to return the IDs (cache should be cleaned up)
+	tf.clearCachedInstances()
+	propsAny3, err = types.AnyValue(TResourceProperties{"fileProp3": "fp3", "id": "id3", "k3": "v3", "tags": tag3})
+	require.NoError(t, err)
+	instDesc3.Properties = propsAny3
+	fns = describeFns{
+		tfShow: func(types []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error) {
+			require.Equal(t, []TResourceType{VMIBMCloud}, types)
+			require.Nil(t, propFilter)
+			result := map[TResourceType]map[TResourceName]TResourceProperties{
+				VMIBMCloud: {
+					TResourceName(id1): TResourceProperties{"fileProp1": "fp1", "id": "id1", "k1": "v1", "tags": tag1},
+					TResourceName(id2): TResourceProperties{"fileProp2": "fp2", "id": "id2", "k2": "v2", "tags": tag2},
+					TResourceName(id3): TResourceProperties{"fileProp3": "fp3", "id": "id3", "k3": "v3", "tags": tag3},
+				},
+			}
+			return result, nil
+		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+			require.Fail(t, fmt.Sprintf("Should not be invoked, resource name: %v", resName))
+			return nil, nil
+		},
+	}
+	result, err = tf.doDescribeInstances(fns, map[string]string{}, true)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+	require.Contains(t, result, instDesc1)
+	require.Contains(t, result, instDesc2)
+	require.Contains(t, result, instDesc3)
+	require.Equal(t, map[TResourceName]string{}, tf.idCache)
 }
 
 func TestCacheClearAndPopulate(t *testing.T) {
