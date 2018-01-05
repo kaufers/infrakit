@@ -14,6 +14,28 @@ import (
 const (
 	// DefaultSyncInterval is the default interval for syncing enrollments
 	DefaultSyncInterval = 5 * time.Second
+
+	// SourceParseErrorEnableDestroy means that the Destroy operation is enabled
+	// even if a source instance fails to parse; therefore, a currently enrolled
+	// instance will be removed if the associated source instance fails to parse.
+	// This is a the default operation on a source instance parse error.
+	SourceParseErrorEnableDestroy = "EnableDestroy"
+
+	// SourceParseErrorDisableDestroy means that the Destroy operation is disabled
+	// whenever any source instance fails to parse; therefore, no enrolled instances
+	// will be removed if any source instance fails to parse.
+	SourceParseErrorDisableDestroy = "DisableDestroy"
+
+	// EnrolledParseErrorEnableProvision means that the Provision operation is enabled
+	// even if an enrolled instance fails to parse; therefore, an instance may be enrolled
+	// multiple times.
+	// This is a the default operation on a enrolled instance parse error.
+	EnrolledParseErrorEnableProvision = "EnableProvision"
+
+	// EnrolledParseErrorDisableProvision means that the Provision operation is disabled
+	// whenever any enrolled instance fails to parse; therefore, no source instances will
+	// be added if any of the currentlly enrolled instances fails to parse.
+	EnrolledParseErrorDisableProvision = "DisableProvision"
 )
 
 func init() {
@@ -108,9 +130,15 @@ type Options struct {
 	// SourceKeySelector: \{\{ .ID \}\}  # selects the ID field.
 	SourceKeySelector string
 
+	// behavior when the source item cannot be indexed
+	SourceParseErrOp string
+
 	// SourceKeySelector is a string template for selecting the join key from
 	// a enrollment plugin's instance.Description.
 	EnrollmentKeySelector string
+
+	// behavior when the enrolled item cannot be indexed
+	EnrollmentParseErrOp string
 
 	// SyncInterval is the time interval between reconciliation. Syntax
 	// is go's time.Duration string representation (e.g. 1m, 30s)

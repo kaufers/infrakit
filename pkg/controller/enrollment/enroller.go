@@ -52,6 +52,13 @@ type enroller struct {
 	enrollmentPropertiesTemplate *template.Template
 }
 
+// DefaultOptions return an Options with default values filled in.
+var DefaultOptions = enrollment.Options{
+	SyncInterval:         types.FromDuration(enrollment.DefaultSyncInterval),
+	SourceParseErrOp:     enrollment.SourceParseErrorEnableDestroy,
+	EnrollmentParseErrOp: enrollment.EnrolledParseErrorEnableProvision,
+}
+
 func newEnroller(scope scope.Scope, leader func() stack.Leadership, options enrollment.Options) *enroller {
 
 	l := &enroller{
@@ -60,6 +67,45 @@ func newEnroller(scope scope.Scope, leader func() stack.Leadership, options enro
 		options: options,
 	}
 
+	// Handle parse error options, default and verify
+	if srcParseErrorOp := l.options.SourceParseErrOp; srcParseErrorOp == "" {
+		l.options.SourceParseErrOp = enrollment.SourceParseErrorEnableDestroy
+	}
+	srcParseErrorOp := l.options.SourceParseErrOp
+	switch srcParseErrorOp {
+	case enrollment.SourceParseErrorEnableDestroy:
+		log.Info("newEnroller", "SourceParseErrOp", srcParseErrorOp)
+	case enrollment.SourceParseErrorDisableDestroy:
+		log.Info("newEnroller", "SourceParseErrOp", srcParseErrorOp)
+	default:
+		log.Error("newEnroller",
+			"msg",
+			fmt.Sprintf("SourceParseErrOp value '%s' is not supported, valid values: %v",
+				srcParseErrorOp,
+				[]string{enrollment.SourceParseErrorEnableDestroy, enrollment.SourceParseErrorDisableDestroy}))
+		// Override to default value
+		l.options.SourceParseErrOp = enrollment.SourceParseErrorEnableDestroy
+	}
+	if enrolledParseErrorOp := l.options.EnrollmentParseErrOp; enrolledParseErrorOp == "" {
+		l.options.EnrollmentParseErrOp = enrollment.EnrolledParseErrorEnableProvision
+	}
+	enrolledParseErrorOp := l.options.EnrollmentParseErrOp
+	switch enrolledParseErrorOp {
+	case enrollment.EnrolledParseErrorEnableProvision:
+		log.Info("newEnroller", "EnrollmentParseErrOp", enrolledParseErrorOp)
+	case enrollment.EnrolledParseErrorDisableProvision:
+		log.Info("newEnroller", "EnrollmentParseErrOp", enrolledParseErrorOp)
+	default:
+		log.Error("newEnroller",
+			"msg",
+			fmt.Sprintf("EnrollmentParseErrOp value '%s' is not supported, valid values: %v",
+				enrolledParseErrorOp,
+				[]string{enrollment.EnrolledParseErrorEnableProvision, enrollment.EnrolledParseErrorDisableProvision}))
+		// Override to default value
+		l.options.EnrollmentParseErrOp = enrollment.EnrolledParseErrorEnableProvision
+	}
+
+	// Handle poll interval
 	interval := l.options.SyncInterval.Duration()
 	if interval == 0 {
 		interval = enrollment.DefaultSyncInterval
@@ -138,7 +184,7 @@ func (l *enroller) updateSpec(spec types.Spec) error {
 	defer l.lock.Unlock()
 
 	if spec.Options != nil {
-		options := enrollment.Options{}
+		options := DefaultOptions
 		if err := spec.Options.Decode(&options); err != nil {
 			return err
 		}
