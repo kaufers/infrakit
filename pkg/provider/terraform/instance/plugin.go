@@ -1191,13 +1191,18 @@ func (p *plugin) doDescribeInstances(fns describeFns, tags map[string]string, pr
 					LogicalID: terraformLogicalID(resProps),
 				}
 
+				// And the properties from either the tf show output or the file data
 				if properties {
+					instProps := TResourceProperties{}
 					if vms, has := terraformShowResult[resType]; has {
 						if details, has := vms[resName]; has {
-							if encoded, err := types.AnyValue(details); err == nil {
-								inst.Properties = encoded
-							}
+							instProps = details
+						} else {
+							instProps = resProps
 						}
+					}
+					if encoded, err := types.AnyValue(instProps); err == nil {
+						inst.Properties = encoded
 					}
 				}
 
