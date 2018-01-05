@@ -1218,7 +1218,6 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 	if p.cachedInstances != nil {
 		return
 	}
-	logger.Info("SRK - refreshNilInstanceCache")
 	// currentFileData are what we told terraform to create - these are the generated files.
 	currentFileData, err := p.listCurrentTfFiles()
 	if err != nil {
@@ -1254,7 +1253,7 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 
 	result := []instance.Description{}
 	// now we scan for <instance_type.instance-<timestamp>> as keys
-	for _, resTypeMap := range currentFileData {
+	for filename, resTypeMap := range currentFileData {
 		for resType, resNamePropsMap := range resTypeMap {
 			for resName, resProps := range resNamePropsMap {
 				// Only process valid instance-xxxx resources
@@ -1277,8 +1276,9 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 						instProps = details
 					}
 				}
-				// Ensure that there is an id, terraform will not write out the state file until after
-				// the provision is complete. We can query the backend using the unique instance tags.
+				// Ensure that there is an id, terraform will not write out the state file until after the provision
+				// is complete. We can query the backend using the unique instance tags (unless the instance is
+				// associated with a ".new" file)
 				if _, has := instProps["id"]; has {
 					// Clear cache
 					delete(p.idCache, resName)
@@ -1287,7 +1287,7 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 					// Check cache
 					if idVal, has := p.idCache[resName]; has {
 						id = &idVal
-					} else {
+					} else if !strings.HasSuffix(filename, ".new") {
 						// Retrieve and update cache, use the tags from the file
 						if idVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
 							if idVal != nil {
