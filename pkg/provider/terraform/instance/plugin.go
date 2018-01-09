@@ -69,16 +69,17 @@ var instanceTfFileRegex = regexp.MustCompile("(^instance-[0-9]+)(.tf.json)([.new
 var instNameRegex = regexp.MustCompile("(.*)(instance-[0-9]+)")
 
 type plugin struct {
-	Dir          string
-	fs           afero.Fs
-	fsLock       sync.Mutex
-	applying     bool
-	applyLock    sync.Mutex
-	pretend      bool // true to actually do terraform apply
-	pollInterval time.Duration
-	pollChannel  chan bool
-	pluginLookup func() discovery.Plugins
-	envs         []string
+	Dir             string
+	fs              afero.Fs
+	fsLock          sync.RWMutex
+	applying        bool
+	applyLock       sync.Mutex
+	pretend         bool // true to actually do terraform apply
+	pollInterval    time.Duration
+	pollChannel     chan bool
+	pluginLookup    func() discovery.Plugins
+	envs            []string
+	cachedInstances *[]instance.Description
 }
 
 // ImportResource defines a resource that should be imported
@@ -130,6 +131,8 @@ func NewTerraformInstancePlugin(dir string, pollInterval time.Duration, standalo
 	if err := p.processImport(importOpts); err != nil {
 		panic(err)
 	}
+	// Populate the cached instances
+	p.refreshCachedInstances()
 	// Ensure that tha apply goroutine is always running; it will only run "terraform apply"
 	// if the current node is the leader. However, when leadership changes, a Provision is
 	// not guaranteed to be executed so we need to create the goroutine now.
@@ -912,6 +915,91 @@ func ensureUniqueFile(dir string) string {
 	return n
 }
 
+// External functions using during describe; broken out for testing
+type describeFns struct {
+	tfShow func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
+}
+
+func (p *plugin) refreshCachedInstances() {
+	fns := describeFns{
+		tfShow: p.doTerraformShow,
+	}
+	p.doRefreshCachedInstances(fns)
+}
+
+func (p *plugin) doRefreshCachedInstances(fns describeFns) {
+	p.cachedInstances = nil
+
+	// currentFileData are what we told terraform to create - these are the generated files.
+	currentFileData, err := p.listCurrentTfFiles()
+	if err != nil {
+		logger.Warn("doRefreshFileCache", "error", err)
+		return
+	}
+
+	terraformShowResult := map[TResourceType]map[TResourceName]TResourceProperties{}
+	// Not all properties are in the file data, we need to parse the "terraform show"
+	// output to retrieve all properties. Since we only care about VM instances, we
+	// need to filter the tf show output to VM resource types only
+	supported := mapset.NewSetFromSlice(VMTypes)
+	resFilterMap := map[TResourceType]struct{}{}
+	for _, resTypeMap := range currentFileData {
+		for resType := range resTypeMap {
+			if supported.Contains(resType) {
+				resFilterMap[resType] = struct{}{}
+			}
+		}
+	}
+	resFilter := []TResourceType{}
+	for resType := range resFilterMap {
+		resFilter = append(resFilter, resType)
+	}
+	if len(resFilter) > 0 {
+		if result, err := fns.tfShow(resFilter, nil); err == nil {
+			terraformShowResult = result
+		} else {
+			logger.Warn("doRefreshFileCache", "terraform show error", err)
+			return
+		}
+	}
+
+	result := []instance.Description{}
+	// now we scan for <instance_type.instance-<timestamp>> as keys
+	for _, resTypeMap := range currentFileData {
+		for resType, resNamePropsMap := range resTypeMap {
+			for resName, resProps := range resNamePropsMap {
+				// Only process valid instance-xxxx resources
+				matches := instNameRegex.FindStringSubmatch(string(resName))
+				if len(matches) != 3 {
+					continue
+				}
+				id := matches[2]
+				inst := instance.Description{
+					Tags:      parseTerraformTags(resType, resProps),
+					ID:        instance.ID(id),
+					LogicalID: terraformLogicalID(resProps),
+				}
+
+				// And the properties from either the tf show output or the file data
+				instProps := TResourceProperties{}
+				if vms, has := terraformShowResult[resType]; has {
+					if details, has := vms[resName]; has {
+						instProps = details
+					} else {
+						instProps = resProps
+					}
+				}
+				if encoded, err := types.AnyValue(instProps); err == nil {
+					inst.Properties = encoded
+				}
+				result = append(result, inst)
+			}
+		}
+	}
+	p.cachedInstances = &result
+	logger.Info("doRefreshFileCache", "cache-size", len(*p.cachedInstances))
+}
+
 // Provision creates a new instance based on the spec.
 func (p *plugin) Provision(spec instance.Spec) (*instance.ID, error) {
 
@@ -921,6 +1009,7 @@ func (p *plugin) Provision(spec instance.Spec) (*instance.ID, error) {
 	// Hold the fs lock for the duration since the file is written at the end
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	defer p.refreshCachedInstances()
 	name := ensureUniqueFile(p.Dir)
 	id := instance.ID(name)
 	logger.Info("Provision", "instance-id", name)
@@ -972,6 +1061,7 @@ func (p *plugin) Provision(spec instance.Spec) (*instance.ID, error) {
 func (p *plugin) Label(instance instance.ID, labels map[string]string) error {
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	defer p.refreshCachedInstances()
 
 	tf, filename, err := p.parseFileForInstanceID(instance)
 	if err != nil {
@@ -1005,6 +1095,7 @@ func (p *plugin) Destroy(instID instance.ID, context instance.Context) error {
 	// Acquire Lock outside of recursive doDestroy function
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	defer p.refreshCachedInstances()
 
 	processAttach := true
 	if context == instance.RollingUpdate {
@@ -1119,107 +1210,34 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 	return []string{}, nil
 }
 
-// External functions using during describe; broken out for testing
-type describeFns struct {
-	tfShow func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
-}
-
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
-	fns := describeFns{
-		tfShow: p.doTerraformShow,
-	}
-	return p.doDescribeInstances(fns, tags, properties)
-}
+	logger.Debug("DescribeInstances", "tags", tags, "V", debugV1)
+	p.fsLock.RLock()
+	defer p.fsLock.RUnlock()
 
-// doDescribeInstances returns descriptions of all instances matching all of the provided tags.
-func (p *plugin) doDescribeInstances(fns describeFns, tags map[string]string, properties bool) ([]instance.Description, error) {
-	logger.Debug("doDescribeInstances", "tags", tags, "V", debugV1)
-	// Acquire lock since we are reading all files and potentially running "terraform show"
-	p.fsLock.Lock()
-	defer p.fsLock.Unlock()
-
-	// currentFileData are what we told terraform to create - these are the generated files.
-	currentFileData, err := p.listCurrentTfFiles()
-	if err != nil {
-		return nil, err
-	}
-
-	terraformShowResult := map[TResourceType]map[TResourceName]TResourceProperties{}
-	if properties {
-		// Not all properties are in the file data, we need to parse the "terraform show"
-		// output to retrieve all properties. Since we only care about VM instances, we
-		// need to filter the tf show output to VM resource types only
-		supported := mapset.NewSetFromSlice(VMTypes)
-		resFilterMap := map[TResourceType]struct{}{}
-		for _, resTypeMap := range currentFileData {
-			for resType := range resTypeMap {
-				if supported.Contains(resType) {
-					resFilterMap[resType] = struct{}{}
-				}
-			}
-		}
-		resFilter := []TResourceType{}
-		for resType := range resFilterMap {
-			resFilter = append(resFilter, resType)
-		}
-		if len(resFilter) > 0 {
-			if result, err := fns.tfShow(resFilter, nil); err == nil {
-				terraformShowResult = result
-			} else {
-				logger.Warn("doDescribeInstances", "terraform show error", err)
-				return nil, err
-			}
-		}
+	if p.cachedInstances == nil {
+		return nil, fmt.Errorf("Instance cache is not initialized")
 	}
 
 	result := []instance.Description{}
-	// now we scan for <instance_type.instance-<timestamp>> as keys
-	for _, resTypeMap := range currentFileData {
-		for resType, resNamePropsMap := range resTypeMap {
-		scan:
-			for resName, resProps := range resNamePropsMap {
-				// Only process valid instance-xxxx resources
-				matches := instNameRegex.FindStringSubmatch(string(resName))
-				if len(matches) != 3 {
-					continue
+	for _, inst := range *p.cachedInstances {
+		if len(tags) == 0 {
+			result = append(result, inst)
+		} else {
+			match := true
+			for k, v := range tags {
+				if inst.Tags[k] != v {
+					match = false // we implement AND
+					break
 				}
-				id := matches[2]
-				inst := instance.Description{
-					Tags:      parseTerraformTags(resType, resProps),
-					ID:        instance.ID(id),
-					LogicalID: terraformLogicalID(resProps),
-				}
-
-				// And the properties from either the tf show output or the file data
-				if properties {
-					instProps := TResourceProperties{}
-					if vms, has := terraformShowResult[resType]; has {
-						if details, has := vms[resName]; has {
-							instProps = details
-						} else {
-							instProps = resProps
-						}
-					}
-					if encoded, err := types.AnyValue(instProps); err == nil {
-						inst.Properties = encoded
-					}
-				}
-
-				if len(tags) == 0 {
-					result = append(result, inst)
-				} else {
-					for k, v := range tags {
-						if inst.Tags[k] != v {
-							continue scan // we implement AND
-						}
-					}
-					result = append(result, inst)
-				}
+			}
+			if match {
+				result = append(result, inst)
 			}
 		}
 	}
-	logger.Debug("doDescribeInstances", "result", result, "V", debugV1)
+	logger.Debug("DescribeInstances", "result", result, "V", debugV1)
 	return result, nil
 }
 
@@ -1304,6 +1322,7 @@ func (p *plugin) importResources(fns importFns, resources []*ImportResource, spe
 	// Acquire lock since we are creating a tf.json.new file and updating terraform state
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	defer p.refreshCachedInstances()
 	vmResName := ensureUniqueFile(p.Dir)
 
 	// Parse the instance spec

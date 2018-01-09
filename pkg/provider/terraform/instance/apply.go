@@ -54,16 +54,7 @@ func (p *plugin) terraformApply() error {
 			// Conditionally apply terraform
 			if p.shouldApply() {
 				fns := tfFuncs{
-					tfRefresh: func() error {
-						command := exec.Command("terraform refresh").
-							InheritEnvs(true).
-							WithEnvs(p.envs...).
-							WithDir(p.Dir)
-						if err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start(); err != nil {
-							return err
-						}
-						return command.Wait()
-					},
+					tfRefresh:           p.doTerraformRefresh,
 					tfStateList:         p.doTerraformStateList,
 					tfImport:            p.doTerraformImport,
 					getExistingResource: p.getExistingResource,
@@ -168,8 +159,8 @@ type tfFuncs struct {
 // hasRecentDeltas returns true if any tf.json[.new] files have been changed in
 // in the last "window" seconds
 func (p *plugin) hasRecentDeltas(window int) (bool, error) {
-	p.fsLock.Lock()
-	defer p.fsLock.Unlock()
+	p.fsLock.RLock()
+	defer p.fsLock.RUnlock()
 
 	now := time.Now()
 	modTime := time.Time{}
@@ -268,6 +259,7 @@ func (p *plugin) handleFiles(fns tfFuncs) error {
 	// and the listing of the files (from Describe) while we reconcile orphans and rename
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
+	defer p.refreshCachedInstances()
 
 	// Load all instance files and all new files from disk
 	tfInstFiles := map[TResourceType]map[TResourceName]TResourceFilenameProps{}
@@ -508,6 +500,18 @@ func (p *plugin) getExistingResource(resType TResourceType, resName TResourceNam
 	}
 	logger.Warn("getExistingResource", "msg", fmt.Sprintf("Unsupported VM type for backend retrival: %v", resType))
 	return nil, nil
+}
+
+// doTerraformRefresh executes a terrform refresh
+func (p *plugin) doTerraformRefresh() error {
+	command := exec.Command("terraform refresh").
+		InheritEnvs(true).
+		WithEnvs(p.envs...).
+		WithDir(p.Dir)
+	if err := command.WithStdout(os.Stdout).WithStderr(os.Stdout).Start(); err != nil {
+		return err
+	}
+	return command.Wait()
 }
 
 // doTerraformStateList shells out to run `terraform state list` and parses the result
