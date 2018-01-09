@@ -259,7 +259,7 @@ func (p *plugin) handleFiles(fns tfFuncs) error {
 	// and the listing of the files (from Describe) while we reconcile orphans and rename
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
-	defer p.refreshCachedInstances()
+	defer p.clearCachedInstances()
 
 	// Load all instance files and all new files from disk
 	tfInstFiles := map[TResourceType]map[TResourceName]TResourceFilenameProps{}
