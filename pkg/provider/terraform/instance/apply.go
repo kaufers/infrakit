@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -169,7 +168,7 @@ type tfFuncs struct {
 	tfRefresh           func() error
 	tfStateList         func() (map[TResourceType]map[TResourceName]struct{}, error)
 	tfImport            func(resType TResourceType, resName, resID string) error
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error)
+	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error)
 }
 
 // hasRecentDeltas returns true if any tf.json[.new] files have been changed in
@@ -426,12 +425,20 @@ func (p *plugin) handleFilePruning(
 				pruneFiles[resFilenameProps.FileName] = struct{}{}
 			} else {
 				// Find resource type in backend
-				importID, err := fns.getExistingResource(resType, resName, resFilenameProps.FileProps)
+				props, err := fns.getExistingResource(resType, resName, resFilenameProps.FileProps)
 				if err != nil {
 					return err
 				}
-				// No ID returned, prune file
-				if importID == nil {
+				// Prune if there is no existing resource or we do not have an ID
+				shouldPrune := true
+				var importID string
+				if props != nil {
+					if idVal, has := (*props)["id"]; has {
+						importID = fmt.Sprintf("%v", idVal)
+						shouldPrune = false
+					}
+				}
+				if shouldPrune {
 					logger.Info("handleFilePruning",
 						"msg",
 						fmt.Sprintf("Pruning %v file, resource %v.%v was not found in backend",
@@ -445,9 +452,9 @@ func (p *plugin) handleFilePruning(
 						"msg",
 						fmt.Sprintf("Importing %v %v into terraform as resource %v ...",
 							string(resType),
-							*importID,
+							importID,
 							string(resName)))
-					if err = fns.tfImport(resType, string(resName), *importID); err != nil {
+					if err = fns.tfImport(resType, string(resName), importID); err != nil {
 						return err
 					}
 				}
@@ -470,7 +477,7 @@ func (p *plugin) handleFilePruning(
 
 // getExistingResource queries the backend cloud to get the ID of the resource associated
 // with the given type, name, and properties
-func (p *plugin) getExistingResource(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+func (p *plugin) getExistingResource(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
 	// Ony VMs retrival is supported
 	supportedVMs := mapset.NewSetFromSlice(VMTypes)
 	if !supportedVMs.Contains(resType) {
@@ -508,15 +515,7 @@ func (p *plugin) getExistingResource(resType TResourceType, resName TResourceNam
 				}
 			}
 		}
-		id, err := GetIBMCloudVMByTag(username, apiKey, tags)
-		if err != nil {
-			return nil, err
-		}
-		if id == nil {
-			return nil, nil
-		}
-		idString := strconv.Itoa(*id)
-		return &idString, nil
+		return GetIBMCloudVMByTag(username, apiKey, tags)
 	}
 	logger.Warn("getExistingResource", "msg", fmt.Sprintf("Unsupported VM type for backend retrival: %v", resType))
 	return nil, nil

@@ -74,9 +74,9 @@ func TestGetUniqueVMByTagsOneMatch(t *testing.T) {
 	vmTagName := "some-tag"
 	vmTag := datatypes.Tag{Name: &vmTagName}
 	vms := []datatypes.Virtual_Guest{{Id: &vmID, TagReferences: []datatypes.Tag_Reference{{Tag: &vmTag}}}}
-	id, err := getUniqueVMByTags(vms, []string{vmTagName})
+	result, err := getUniqueVMByTags(vms, []string{vmTagName})
 	require.NoError(t, err)
-	require.Equal(t, vmID, *id)
+	require.Equal(t, vms[0], *result)
 }
 
 func TestGetUniqueVMByTagsOneMatchNilID(t *testing.T) {

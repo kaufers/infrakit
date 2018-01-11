@@ -566,7 +566,7 @@ func TestHandleFilePruningPruneExistingResourceError(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	fns := tfFuncs{
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
 			require.Equal(t, VMIBMCloud, resType)
 			require.Equal(t, TResourceName("instance-123"), resName)
 			require.Equal(t, TResourceProperties{"foo": "bar"}, props)
@@ -592,9 +592,9 @@ func TestHandleFilePruningPruneImportError(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	fns := tfFuncs{
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
-			id := "some-id"
-			return &id, nil
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+			result := TResourceProperties{"id": "some-id"}
+			return &result, nil
 		},
 		tfImport: func(resType TResourceType, resName, resID string) error {
 			require.Equal(t, VMIBMCloud, resType)
@@ -637,7 +637,7 @@ func TestHandleFilePruningRemovedFromBackend(t *testing.T) {
 	writeFileInfo(info, t)
 
 	fns := tfFuncs{
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
 			// Resource is not in the backend
 			return nil, nil
 		},
@@ -665,9 +665,9 @@ func TestHandleFilePruningImportSuccess(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	fns := tfFuncs{
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
-			id := "some-id"
-			return &id, nil
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+			result := TResourceProperties{"id": "some-id"}
+			return &result, nil
 		},
 		tfImport: func(resType TResourceType, resName, resID string) error {
 			// Import is successful
@@ -835,18 +835,18 @@ func internalTestHandleFilesPruneMultipleVMTypes(t *testing.T, pruneType int) {
 			}
 			return fmt.Errorf("tfImport should not be invoked for pruneType: %v", pruneType)
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
 			if pruneType == Prune1RemoveOutOfBand {
 				return nil, fmt.Errorf("tfImport should not be invoked for pruneType: Prune1RemoveOutOfBand")
 			}
 			if pruneType == Prune2ExistsInBackend {
 				if resType == VMAmazon && resName == TResourceName("instance-105") {
-					id := "aws-instance-105"
-					return &id, nil
+					result := TResourceProperties{"id": "aws-instance-105"}
+					return &result, nil
 				}
 				if resType == VMGoogleCloud && resName == TResourceName("instance-108") {
-					id := "gcp-instance-108"
-					return &id, nil
+					result := TResourceProperties{"id": "gcp-instance-108"}
+					return &result, nil
 				}
 				return nil, nil
 			}

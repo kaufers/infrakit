@@ -55,10 +55,10 @@ func mergeLabelsIntoTagSlice(tags []interface{}, labels map[string]string) []str
 }
 
 // GetIBMCloudVMByTag queries Softlayer for VMs that match all of the given tags. Returns
-// the single VM ID that matches or nil if there are no matches.
-func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*int, error) {
+// properites associated with single VM ID that matches or nil if there are no matches.
+func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourceProperties, error) {
 	c := client.GetClient(username, apiKey)
-	mask := "id,hostname,tagReferences[id,tag[name]]"
+	mask := "id,hostname,primaryIpAddress,primaryBackendIpAddress,tagReferences[id,tag[name]]"
 	// Use the swarm ID as the filter
 	var filters *string
 	for _, tag := range tags {
@@ -72,11 +72,33 @@ func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*int, error) {
 	if err != nil {
 		return nil, err
 	}
-	return getUniqueVMByTags(vms, tags)
+	vm, err := getUniqueVMByTags(vms, tags)
+	if err != nil {
+		return nil, err
+	}
+	if vm == nil {
+		return nil, nil
+	}
+	// Map the properties to what we expect to be in the terraform state file
+	props := TResourceProperties{}
+	if vm.PrimaryIpAddress != nil {
+		props["ipv4_address"] = *vm.PrimaryIpAddress
+	}
+	if vm.PrimaryBackendIpAddress != nil {
+		props["ipv4_address_private"] = *vm.PrimaryBackendIpAddress
+	}
+	if vm.Hostname != nil {
+		props["hostname"] = *vm.Hostname
+	}
+	if vm.Id != nil {
+		props["id"] = *vm.Id
+	}
+	logger.Info("GetIBMCloudVMByTag", "props", props)
+	return &props, nil
 }
 
-// getUniqueVMByTags returns the single VM ID that matches or nil if there are no matches.
-func getUniqueVMByTags(vms []datatypes.Virtual_Guest, tags []string) (*int, error) {
+// getUniqueVMByTags returns the single VM that matches or nil if there are no matches.
+func getUniqueVMByTags(vms []datatypes.Virtual_Guest, tags []string) (*datatypes.Virtual_Guest, error) {
 	// Filter by tags
 	filterVMsByTags(&vms, tags)
 	// No match
@@ -94,7 +116,7 @@ func getUniqueVMByTags(vms []datatypes.Virtual_Guest, tags []string) (*int, erro
 			return nil, fmt.Errorf("VM '%v' missing ID", name)
 		}
 		logger.Info("getUniqueVMByTags", "msg", fmt.Sprintf("Existing VM %v with ID %v matches tags: %v", name, *vms[0].Id, tags))
-		return vms[0].Id, nil
+		return &vms[0], nil
 	}
 	// More than 1 match
 	ids := []int{}

@@ -84,7 +84,7 @@ type plugin struct {
 	pluginLookup    func() discovery.Plugins
 	envs            []string
 	cachedInstances *[]instance.Description
-	idCache         map[TResourceName]string
+	idCache         map[TResourceName]TResourceProperties
 }
 
 // ImportResource defines a resource that should be imported
@@ -140,7 +140,7 @@ func NewTerraformInstancePlugin(options terraform_types.Options, importOpts *Imp
 		pollInterval: options.PollInterval.Duration(),
 		pluginLookup: pluginLookup,
 		envs:         envs,
-		idCache:      map[TResourceName]string{},
+		idCache:      map[TResourceName]TResourceProperties{},
 	}
 	if err := p.processImport(importOpts); err != nil {
 		panic(err)
@@ -1150,7 +1150,7 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 // External functions using during describe; broken out for testing
 type describeFns struct {
 	tfShow              func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*string, error)
+	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error)
 }
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
@@ -1283,24 +1283,27 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 					// Clear cache
 					delete(p.idCache, resName)
 				} else {
-					var id *string
+					var props *TResourceProperties
 					// Check cache
-					if idVal, has := p.idCache[resName]; has {
-						id = &idVal
+					if propsVal, has := p.idCache[resName]; has {
+						props = &propsVal
 					} else if !strings.HasSuffix(filename, ".new") {
 						// Retrieve and update cache, use the tags from the file
-						if idVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
-							if idVal != nil {
-								id = idVal
-								p.idCache[resName] = *id
-								logger.Info("doDescribeInstances", "msg", fmt.Sprintf("Cached id %v for %v", *idVal, resName))
+						if propsVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
+							if propsVal != nil {
+								logger.Info("doDescribeInstances", "msg", fmt.Sprintf("Cached data for %v: %v", resName, *propsVal))
+								props = propsVal
+								p.idCache[resName] = *propsVal
 							}
 						} else {
 							logger.Warn("doDescribeInstances", "msg", "Failed to determine existing resource", "error", err)
 						}
 					}
-					if id != nil {
-						instProps["id"] = *id
+					// Override props
+					if props != nil {
+						for k, v := range *props {
+							instProps[k] = v
+						}
 					}
 				}
 				if encoded, err := types.AnyValue(instProps); err != nil {
