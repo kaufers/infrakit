@@ -84,7 +84,6 @@ type plugin struct {
 	pluginLookup    func() discovery.Plugins
 	envs            []string
 	cachedInstances *[]instance.Description
-	idCache         map[TResourceName]TResourceProperties
 }
 
 // ImportResource defines a resource that should be imported
@@ -140,7 +139,6 @@ func NewTerraformInstancePlugin(options terraform_types.Options, importOpts *Imp
 		pollInterval: options.PollInterval.Duration(),
 		pluginLookup: pluginLookup,
 		envs:         envs,
-		idCache:      map[TResourceName]TResourceProperties{},
 	}
 	if err := p.processImport(importOpts); err != nil {
 		panic(err)
@@ -1279,25 +1277,16 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 				// Ensure that there is an id, terraform will not write out the state file until after the provision
 				// is complete. We can query the backend using the unique instance tags (unless the instance is
 				// associated with a ".new" file)
-				if _, has := instProps["id"]; has {
-					// Clear cache
-					delete(p.idCache, resName)
-				} else {
+				if _, has := instProps["id"]; !has && !strings.HasSuffix(filename, ".new") {
 					var props *TResourceProperties
-					// Check cache
-					if propsVal, has := p.idCache[resName]; has {
-						props = &propsVal
-					} else if !strings.HasSuffix(filename, ".new") {
-						// Retrieve and update cache, use the tags from the file
-						if propsVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
-							if propsVal != nil {
-								logger.Info("doDescribeInstances", "msg", fmt.Sprintf("Cached data for %v: %v", resName, *propsVal))
-								props = propsVal
-								p.idCache[resName] = *propsVal
-							}
-						} else {
-							logger.Warn("doDescribeInstances", "msg", "Failed to determine existing resource", "error", err)
+					// Retrieve and update cache, use the tags from the file
+					if propsVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
+						if propsVal != nil {
+							logger.Info("refreshNilInstanceCache", "msg", fmt.Sprintf("Backend data for %v: %v", resName, *propsVal))
+							props = propsVal
 						}
+					} else {
+						logger.Warn("refreshNilInstanceCache", "msg", "Failed to determine existing resource", "error", err)
 					}
 					// Override props
 					if props != nil {
