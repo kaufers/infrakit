@@ -56,7 +56,7 @@ func mergeLabelsIntoTagSlice(tags []interface{}, labels map[string]string) []str
 
 // GetIBMCloudVMByTag queries Softlayer for VMs that match all of the given tags. Returns
 // properites associated with single VM ID that matches or nil if there are no matches.
-func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourceProperties, error) {
+func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourceProperties, bool, error) {
 	c := client.GetClient(username, apiKey)
 	mask := "id,hostname,primaryIpAddress,primaryBackendIpAddress,tagReferences[id,tag[name]]"
 	// Use the swarm ID as the filter
@@ -70,14 +70,14 @@ func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourcePrope
 	}
 	vms, err := c.GetVirtualGuests(username, apiKey, &mask, filters)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	vm, err := getUniqueVMByTags(vms, tags)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if vm == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	// Map the properties to what we expect to be in the terraform state file
 	props := TResourceProperties{}
@@ -93,8 +93,9 @@ func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourcePrope
 	if vm.Id != nil {
 		props["id"] = *vm.Id
 	}
-	logger.Info("GetIBMCloudVMByTag", "props", props)
-	return &props, nil
+	logger.Debug("GetIBMCloudVMByTag", "props", props, "V", debugV1)
+	// If all 4 properties were retrieved then this data is complete
+	return &props, len(props) == 4, nil
 }
 
 // getUniqueVMByTags returns the single VM that matches or nil if there are no matches.

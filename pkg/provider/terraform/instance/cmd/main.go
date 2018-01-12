@@ -97,9 +97,10 @@ func main() {
 			resources = append(resources, &res)
 		}
 		options := terraform_types.Options{
-			Dir:          *dir,
-			PollInterval: types.FromDuration(*pollInterval),
-			Standalone:   *standalone,
+			Dir:              *dir,
+			PollInterval:     types.FromDuration(*pollInterval),
+			Standalone:       *standalone,
+			InstanceCacheTTL: types.FromDuration(time.Minute),
 		}
 		cli.SetLogLevel(*logLevel)
 		plugin, err := terraform.NewTerraformInstancePlugin(options,

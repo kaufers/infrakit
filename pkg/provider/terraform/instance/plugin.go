@@ -84,6 +84,8 @@ type plugin struct {
 	pluginLookup    func() discovery.Plugins
 	envs            []string
 	cachedInstances *[]instance.Description
+	cacheTTL        time.Duration
+	cacheTs         *time.Time
 }
 
 // ImportResource defines a resource that should be imported
@@ -139,6 +141,7 @@ func NewTerraformInstancePlugin(options terraform_types.Options, importOpts *Imp
 		pollInterval: options.PollInterval.Duration(),
 		pluginLookup: pluginLookup,
 		envs:         envs,
+		cacheTTL:     options.InstanceCacheTTL.Duration(),
 	}
 	if err := p.processImport(importOpts); err != nil {
 		panic(err)
@@ -147,7 +150,7 @@ func NewTerraformInstancePlugin(options terraform_types.Options, importOpts *Imp
 	fns := describeFns{
 		tfShow: p.doTerraformShow,
 	}
-	p.refreshNilInstanceCache(fns)
+	p.refreshNilOrExpiredInstanceCache(fns)
 	// Ensure that tha apply goroutine is always running; it will only run "terraform apply"
 	// if the current node is the leader. However, when leadership changes, a Provision is
 	// not guaranteed to be executed so we need to create the goroutine now.
@@ -1148,7 +1151,7 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 // External functions using during describe; broken out for testing
 type describeFns struct {
 	tfShow              func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error)
+	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error)
 }
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
@@ -1163,9 +1166,9 @@ func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]i
 // doDescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) doDescribeInstances(fns describeFns, tags map[string]string, properties bool) ([]instance.Description, error) {
 	logger.Debug("DescribeInstances", "tags", tags, "V", debugV1)
-	// The cache may have been nil-ified, check and refresh
-	if p.isCacheNil() {
-		p.refreshNilInstanceCache(fns)
+	// The cache may have been nil-ified or expired, check and refresh
+	if p.isCacheNilOrExpired() {
+		p.refreshNilOrExpiredInstanceCache(fns)
 	}
 	// Should have a cache, acquire read lock
 	p.fsLock.RLock()
@@ -1197,11 +1200,22 @@ scan:
 	return result, nil
 }
 
-// isCacheNil returns true if the instance cache is nil
-func (p *plugin) isCacheNil() bool {
+// isCacheNil returns true if the instance cache is nil or non-nil but expired
+func (p *plugin) isCacheNilOrExpired() bool {
 	p.fsLock.RLock()
 	defer p.fsLock.RUnlock()
-	return p.cachedInstances == nil
+	if p.cachedInstances == nil {
+		return true
+	}
+	if p.cacheTs == nil {
+		return false
+	}
+	now := time.Now()
+	expired := (*p.cacheTs).Before(now.Add(-p.cacheTTL))
+	if expired {
+		logger.Info("isCacheNilOrExpired", "msg", fmt.Sprintf("cache has expired, delta: %v", now.Sub(*p.cacheTs)))
+	}
+	return expired
 }
 
 // clearCachedInstances clears the instance cache
@@ -1209,12 +1223,15 @@ func (p *plugin) clearCachedInstances() {
 	p.cachedInstances = nil
 }
 
-// refreshNilInstanceCache re-populates the cache if it is nil
-func (p *plugin) refreshNilInstanceCache(fns describeFns) {
+// refreshNilOrExpiredInstanceCache re-populates the cache if it is nil or expired
+func (p *plugin) refreshNilOrExpiredInstanceCache(fns describeFns) {
 	p.fsLock.Lock()
 	defer p.fsLock.Unlock()
 	if p.cachedInstances != nil {
-		return
+		// We have a cache, return if it is not expired
+		if p.cacheTs == nil || (*p.cacheTs).After(time.Now().Add(-p.cacheTTL)) {
+			return
+		}
 	}
 	// currentFileData are what we told terraform to create - these are the generated files.
 	currentFileData, err := p.listCurrentTfFiles()
@@ -1250,6 +1267,7 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 	}
 
 	result := []instance.Description{}
+	haveIncompleteBackendInsts := false
 	// now we scan for <instance_type.instance-<timestamp>> as keys
 	for filename, resTypeMap := range currentFileData {
 		for resType, resNamePropsMap := range resTypeMap {
@@ -1278,21 +1296,28 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 				// is complete. We can query the backend using the unique instance tags (unless the instance is
 				// associated with a ".new" file)
 				if _, has := instProps["id"]; !has && !strings.HasSuffix(filename, ".new") {
+					isComplete := false
 					var props *TResourceProperties
 					// Retrieve and update cache, use the tags from the file
-					if propsVal, err := fns.getExistingResource(resType, resName, resProps); err == nil {
+					if propsVal, complete, err := fns.getExistingResource(resType, resName, resProps); err == nil {
 						if propsVal != nil {
 							logger.Info("refreshNilInstanceCache", "msg", fmt.Sprintf("Backend data for %v: %v", resName, *propsVal))
 							props = propsVal
+							if complete {
+								isComplete = true
+							}
 						}
 					} else {
 						logger.Warn("refreshNilInstanceCache", "msg", "Failed to determine existing resource", "error", err)
 					}
-					// Override props
+					// Merge props, overriding common keys
 					if props != nil {
 						for k, v := range *props {
 							instProps[k] = v
 						}
+					}
+					if !isComplete {
+						haveIncompleteBackendInsts = true
 					}
 				}
 				if encoded, err := types.AnyValue(instProps); err != nil {
@@ -1307,7 +1332,14 @@ func (p *plugin) refreshNilInstanceCache(fns describeFns) {
 			}
 		}
 	}
+	if haveIncompleteBackendInsts {
+		now := time.Now()
+		p.cacheTs = &now
+	} else {
+		p.cacheTs = nil
+	}
 	p.cachedInstances = &result
+
 	logger.Info("refreshCachedInstances", "cache-size", len(*p.cachedInstances))
 }
 

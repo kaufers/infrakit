@@ -37,9 +37,10 @@ func init() {
 // DefaultOptions return an Options with default values filled in.  If you want to expose these to the CLI,
 // simply get this struct and bind the fields to the flags.
 var DefaultOptions = terraform_types.Options{
-	Dir:          local.Getenv(EnvDir, filepath.Join(local.InfrakitHome(), "terraform")),
-	PollInterval: types.FromDuration(30 * time.Second),
-	Standalone:   false,
+	Dir:              local.Getenv(EnvDir, filepath.Join(local.InfrakitHome(), "terraform")),
+	PollInterval:     types.FromDuration(30 * time.Second),
+	Standalone:       false,
+	InstanceCacheTTL: types.FromDuration(time.Minute),
 }
 
 // Run runs the plugin, blocking the current thread.  Error is returned immediately

@@ -25,8 +25,8 @@ var (
 		tfShow: func(resTypes []TResourceType, propFilter []string) (result map[TResourceType]map[TResourceName]TResourceProperties, err error) {
 			return map[TResourceType]map[TResourceName]TResourceProperties{}, nil
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
-			return nil, nil
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
+			return nil, true, nil
 		},
 	}
 )
@@ -97,8 +97,9 @@ func getPlugin(t *testing.T) (*plugin, string) {
 	dir, err := ioutil.TempDir("", "infrakit-instance-terraform")
 	require.NoError(t, err)
 	options := terraform_types.Options{
-		Dir:          dir,
-		PollInterval: types.FromDuration(2 * time.Minute),
+		Dir:              dir,
+		PollInterval:     types.FromDuration(2 * time.Minute),
+		InstanceCacheTTL: types.FromDuration(time.Minute),
 	}
 	tf, err := NewTerraformInstancePlugin(options, nil)
 	require.NoError(t, err)
@@ -119,8 +120,9 @@ func getPluginDirNotExists(t *testing.T) (*plugin, string) {
 	require.Error(t, err)
 	require.True(t, os.IsNotExist(err), fmt.Sprintf("Incorrect error, expected NotExist, got %v", err))
 	options := terraform_types.Options{
-		Dir:          dir,
-		PollInterval: types.FromDuration(2 * time.Minute),
+		Dir:              dir,
+		PollInterval:     types.FromDuration(2 * time.Minute),
+		InstanceCacheTTL: types.FromDuration(time.Minute),
 	}
 	tf, err := NewTerraformInstancePlugin(options, nil)
 	require.NoError(t, err)
@@ -140,8 +142,9 @@ func getPluginDirNoPerms(t *testing.T) (*plugin, string) {
 	os.Mkdir(dir, 0200)
 	require.NoError(t, err)
 	options := terraform_types.Options{
-		Dir:          dir,
-		PollInterval: types.FromDuration(2 * time.Minute),
+		Dir:              dir,
+		PollInterval:     types.FromDuration(2 * time.Minute),
+		InstanceCacheTTL: types.FromDuration(time.Minute),
 	}
 	tf, err := NewTerraformInstancePlugin(options, nil)
 	require.NoError(t, err)
@@ -5160,8 +5163,8 @@ func TestDoDescribeInstancesShowError(t *testing.T) {
 			require.Nil(t, propFilter)
 			return nil, fmt.Errorf("Custom show error")
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
-			return nil, nil
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
+			return nil, false, nil
 		},
 	}
 
@@ -5333,18 +5336,18 @@ func TestDoDescribeMissingID(t *testing.T) {
 			}
 			return result, nil
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
 			require.Equal(t, VMIBMCloud, resType)
 			if resName == TResourceName(id1) {
 				require.Equal(t, props1, props)
 				result := TResourceProperties{"id": "id1", "backend1": "b1"}
-				return &result, nil
+				return &result, true, nil
 			}
 			if resName == TResourceName(id2) {
 				require.Equal(t, props2, props)
-				return nil, nil
+				return nil, true, nil
 			}
-			return nil, fmt.Errorf("error for resource 3")
+			return nil, false, fmt.Errorf("error for resource 3")
 		},
 	}
 
@@ -5379,19 +5382,19 @@ func TestDoDescribeMissingID(t *testing.T) {
 	tf.clearCachedInstances()
 	propsAny2, _ = types.AnyValue(TResourceProperties{"fileProp2": "fp2", "id": "id2", "backend2": "b2", "k2": "v2", "tags": tag2})
 	instDesc2.Properties = propsAny2
-	fns.getExistingResource = func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+	fns.getExistingResource = func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
 		require.Equal(t, VMIBMCloud, resType)
 		if resName == TResourceName(id1) {
 			require.Equal(t, props1, props)
 			result := TResourceProperties{"id": "id1", "backend1": "b1"}
-			return &result, nil
+			return &result, true, nil
 		}
 		if resName == TResourceName(id2) {
 			require.Equal(t, props2, props)
 			result := TResourceProperties{"id": "id2", "backend2": "b2"}
-			return &result, nil
+			return &result, true, nil
 		}
-		return nil, fmt.Errorf("error for resource 3")
+		return nil, false, fmt.Errorf("error for resource 3")
 	}
 	result, err = tf.doDescribeInstances(fns, map[string]string{}, true)
 	require.NoError(t, err)
@@ -5421,9 +5424,9 @@ func TestDoDescribeMissingID(t *testing.T) {
 			}
 			return result, nil
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
 			require.Fail(t, fmt.Sprintf("Should not be invoked, resource name: %v", resName))
-			return nil, nil
+			return nil, false, nil
 		},
 	}
 	result, err = tf.doDescribeInstances(fns, map[string]string{}, true)
@@ -5554,11 +5557,12 @@ func TestCache(t *testing.T) {
 
 	// Cache should be non-nil but empty
 	require.Equal(t, []instance.Description{}, *tf.cachedInstances)
-	require.False(t, tf.isCacheNil())
+	require.False(t, tf.isCacheNilOrExpired())
+	require.Nil(t, tf.cacheTs)
 
 	// nil-ify the cache
 	tf.cachedInstances = nil
-	require.True(t, tf.isCacheNil())
+	require.True(t, tf.isCacheNilOrExpired())
 
 	// Create an instance on the filesystem
 	id1 := "instance-1"
@@ -5571,27 +5575,59 @@ func TestCache(t *testing.T) {
 	}
 	buff, err := json.MarshalIndent(tFormat, " ", " ")
 	require.NoError(t, err)
-	err = afero.WriteFile(tf.fs, filepath.Join(tf.Dir, "instance-1.tf.json.new"), buff, 0644)
+	err = afero.WriteFile(tf.fs, filepath.Join(tf.Dir, "instance-1.tf.json"), buff, 0644)
 	require.NoError(t, err)
 
 	// Refresh should pick it up
-	expectedProps, err := types.AnyValue(TResourceProperties{"fileProp1": "fp1"})
+	expectedProps, err := types.AnyValue(TResourceProperties{"fileProp1": "fp1", "backend1": "bp1"})
 	require.NoError(t, err)
 	expectedInstDesc := instance.Description{
 		ID:         instance.ID(id1),
 		Tags:       map[string]string{},
 		Properties: expectedProps,
 	}
-	tf.refreshNilInstanceCache(emptyTfShowFns)
+	tf.refreshNilOrExpiredInstanceCache(describeFns{
+		tfShow: func(resTypes []TResourceType, propFilter []string) (result map[TResourceType]map[TResourceName]TResourceProperties, err error) {
+			return map[TResourceType]map[TResourceName]TResourceProperties{}, nil
+		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
+			backendProps := TResourceProperties{"backend1": "bp1"}
+			// Flag that this is NOT complete, this will trigger the cache ts
+			return &backendProps, false, nil
+		},
+	})
 	require.Equal(t, []instance.Description{expectedInstDesc}, *tf.cachedInstances)
+	require.False(t, tf.isCacheNilOrExpired())
+	require.NotNil(t, tf.cachedInstances)
+	require.NotNil(t, tf.cacheTs)
+
+	// Mark the cache as expired, data should refresh
+	expiredTs := (*tf.cacheTs).Add(-tf.cacheTTL).Add(-1 * time.Millisecond)
+	tf.cacheTs = &expiredTs
+	require.True(t, tf.isCacheNilOrExpired())
+	expectedProps, _ = types.AnyValue(TResourceProperties{"fileProp1": "fp1", "backend2": "bp2"})
+	expectedInstDesc.Properties = expectedProps
+	tf.refreshNilOrExpiredInstanceCache(describeFns{
+		tfShow: func(resTypes []TResourceType, propFilter []string) (result map[TResourceType]map[TResourceName]TResourceProperties, err error) {
+			return map[TResourceType]map[TResourceName]TResourceProperties{}, nil
+		},
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
+			backendProps := TResourceProperties{"backend2": "bp2"}
+			// Flag that this is complete, this will trigger the cache ts to clear
+			return &backendProps, true, nil
+		},
+	})
+	require.Equal(t, []instance.Description{expectedInstDesc}, *tf.cachedInstances)
+	require.False(t, tf.isCacheNilOrExpired())
+	require.Nil(t, tf.cacheTs)
 
 	// Now that it's cached we can remove the file
-	err = tf.fs.Remove(filepath.Join(tf.Dir, "instance-1.tf.json.new"))
+	err = tf.fs.Remove(filepath.Join(tf.Dir, "instance-1.tf.json"))
 	require.NoError(t, err)
 
 	// A refresh shouldn't change the cache since it is not nil
-	require.False(t, tf.isCacheNil())
-	tf.refreshNilInstanceCache(emptyTfShowFns)
+	require.False(t, tf.isCacheNilOrExpired())
+	tf.refreshNilOrExpiredInstanceCache(emptyTfShowFns)
 	require.Equal(t, []instance.Description{expectedInstDesc}, *tf.cachedInstances)
 
 	// And describe should use the cache
@@ -5607,11 +5643,11 @@ func TestCache(t *testing.T) {
 
 	// Now clear it
 	tf.clearCachedInstances()
-	require.True(t, tf.isCacheNil())
+	require.True(t, tf.isCacheNilOrExpired())
 
 	// Refresh, no files
-	tf.refreshNilInstanceCache(emptyTfShowFns)
-	require.False(t, tf.isCacheNil())
+	tf.refreshNilOrExpiredInstanceCache(emptyTfShowFns)
+	require.False(t, tf.isCacheNilOrExpired())
 	require.Equal(t, []instance.Description{}, *tf.cachedInstances)
 	insts, err = tf.doDescribeInstances(fns, map[string]string{}, true)
 	require.NoError(t, err)
@@ -5659,15 +5695,15 @@ func TestDoDescribeMissingIDNewFile(t *testing.T) {
 			}
 			return result, nil
 		},
-		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+		getExistingResource: func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
 			require.Equal(t, VMIBMCloud, resType)
 			if resName == TResourceName(id1) {
 				require.Equal(t, props1, props)
 				result := TResourceProperties{"id": "id1"}
-				return &result, nil
+				return &result, true, nil
 			}
 			require.Fail(t, fmt.Sprintf("getExistingResource should not be called: %v", resName))
-			return nil, nil
+			return nil, false, nil
 		},
 	}
 

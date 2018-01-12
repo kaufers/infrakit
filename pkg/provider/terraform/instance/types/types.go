@@ -59,6 +59,10 @@ type Options struct {
 
 	// Envs are the environment variables to include when invoking terraform
 	Envs types.Any
+
+	// InstanceCacheTTL is the TTL for the instance cache when incomplete backend
+	// instances are present
+	InstanceCacheTTL types.Duration
 }
 
 // ParseOptionsEnvs processes the data to create a key=value slice of strings

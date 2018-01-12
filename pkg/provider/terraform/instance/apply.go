@@ -168,7 +168,7 @@ type tfFuncs struct {
 	tfRefresh           func() error
 	tfStateList         func() (map[TResourceType]map[TResourceName]struct{}, error)
 	tfImport            func(resType TResourceType, resName, resID string) error
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error)
+	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error)
 }
 
 // hasRecentDeltas returns true if any tf.json[.new] files have been changed in
@@ -425,7 +425,7 @@ func (p *plugin) handleFilePruning(
 				pruneFiles[resFilenameProps.FileName] = struct{}{}
 			} else {
 				// Find resource type in backend
-				props, err := fns.getExistingResource(resType, resName, resFilenameProps.FileProps)
+				props, _, err := fns.getExistingResource(resType, resName, resFilenameProps.FileProps)
 				if err != nil {
 					return err
 				}
@@ -477,22 +477,22 @@ func (p *plugin) handleFilePruning(
 
 // getExistingResource queries the backend cloud to get the ID of the resource associated
 // with the given type, name, and properties
-func (p *plugin) getExistingResource(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, error) {
+func (p *plugin) getExistingResource(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
 	// Ony VMs retrival is supported
 	supportedVMs := mapset.NewSetFromSlice(VMTypes)
 	if !supportedVMs.Contains(resType) {
-		return nil, nil
+		return nil, true, nil
 	}
 	switch resType {
 	case VMSoftLayer, VMIBMCloud:
 		tagsProp, has := props["tags"]
 		if !has {
-			return nil, nil
+			return nil, false, nil
 		}
 		// Convert tags to String
 		tagsInterface, ok := tagsProp.([]interface{})
 		if !ok {
-			return nil, fmt.Errorf("Cannot process tags, unknown type: %v", reflect.TypeOf(tagsProp))
+			return nil, false, fmt.Errorf("Cannot process tags, unknown type: %v", reflect.TypeOf(tagsProp))
 		}
 		tags := make([]string, len(tagsInterface))
 		for i, t := range tagsInterface {
@@ -518,7 +518,7 @@ func (p *plugin) getExistingResource(resType TResourceType, resName TResourceNam
 		return GetIBMCloudVMByTag(username, apiKey, tags)
 	}
 	logger.Warn("getExistingResource", "msg", fmt.Sprintf("Unsupported VM type for backend retrival: %v", resType))
-	return nil, nil
+	return nil, true, nil
 }
 
 // doTerraformStateList shells out to run `terraform state list` and parses the result
