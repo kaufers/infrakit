@@ -83,7 +83,7 @@ type plugin struct {
 	pollChannel     chan bool
 	pluginLookup    func() discovery.Plugins
 	envs            []string
-	cachedInstances *[]instance.Description
+	cachedInstances []*instance.Description
 	cacheTTL        time.Duration
 	cacheTs         *time.Time
 }
@@ -1150,15 +1150,15 @@ func parseAttachTag(tf *TFormat) ([]string, error) {
 
 // External functions using during describe; broken out for testing
 type describeFns struct {
-	tfShow              func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error)
+	tfShow               func(resTypes []TResourceType, propFilter []string) (map[TResourceType]map[TResourceName]TResourceProperties, error)
+	getExistingResources func([]*backend) error
 }
 
 // DescribeInstances returns descriptions of all instances matching all of the provided tags.
 func (p *plugin) DescribeInstances(tags map[string]string, properties bool) ([]instance.Description, error) {
 	fns := describeFns{
-		tfShow:              p.doTerraformShow,
-		getExistingResource: p.getExistingResource,
+		tfShow:               p.doTerraformShow,
+		getExistingResources: p.getExistingResources,
 	}
 	return p.doDescribeInstances(fns, tags, properties)
 }
@@ -1181,7 +1181,9 @@ func (p *plugin) doDescribeInstances(fns describeFns, tags map[string]string, pr
 
 	result := []instance.Description{}
 scan:
-	for _, inst := range *p.cachedInstances {
+	for _, i := range p.cachedInstances {
+		// Make a copy of the cached instance
+		inst := *i
 		if !properties {
 			inst.Properties = types.AnyString("{}")
 		}
@@ -1266,8 +1268,8 @@ func (p *plugin) refreshNilOrExpiredInstanceCache(fns describeFns) {
 		}
 	}
 
-	result := []instance.Description{}
-	haveIncompleteBackendInsts := false
+	backendInsts := []*backend{}
+	result := []*instance.Description{}
 	// now we scan for <instance_type.instance-<timestamp>> as keys
 	for filename, resTypeMap := range currentFileData {
 		for resType, resNamePropsMap := range resTypeMap {
@@ -1292,34 +1294,6 @@ func (p *plugin) refreshNilOrExpiredInstanceCache(fns describeFns) {
 						instProps = details
 					}
 				}
-				// Ensure that there is an id, terraform will not write out the state file until after the provision
-				// is complete. We can query the backend using the unique instance tags (unless the instance is
-				// associated with a ".new" file)
-				if _, has := instProps["id"]; !has && !strings.HasSuffix(filename, ".new") {
-					isComplete := false
-					var props *TResourceProperties
-					// Retrieve and update cache, use the tags from the file
-					if propsVal, complete, err := fns.getExistingResource(resType, resName, resProps); err == nil {
-						if propsVal != nil {
-							logger.Info("refreshNilInstanceCache", "msg", fmt.Sprintf("Backend data for %v: %v", resName, *propsVal))
-							props = propsVal
-							if complete {
-								isComplete = true
-							}
-						}
-					} else {
-						logger.Warn("refreshNilInstanceCache", "msg", "Failed to determine existing resource", "error", err)
-					}
-					// Merge props, overriding common keys
-					if props != nil {
-						for k, v := range *props {
-							instProps[k] = v
-						}
-					}
-					if !isComplete {
-						haveIncompleteBackendInsts = true
-					}
-				}
 				if encoded, err := types.AnyValue(instProps); err != nil {
 					logger.Warn("refreshCachedInstances",
 						"msg", "Failed to encode instance props",
@@ -1328,19 +1302,66 @@ func (p *plugin) refreshNilOrExpiredInstanceCache(fns describeFns) {
 				} else {
 					inst.Properties = encoded
 				}
-				result = append(result, inst)
+				result = append(result, &inst)
+				// Ensure that there is an id, terraform will not write out the state file until after the provision
+				// is complete. We can query the backend using the unique instance tags (unless the instance is
+				// associated with a ".new" file)
+				if _, has := instProps["id"]; !has && !strings.HasSuffix(filename, ".new") {
+					b := backend{
+						resType:     resType,
+						resName:     resName,
+						fileProps:   instProps,
+						fileTags:    fileTags,
+						description: &inst,
+					}
+					backendInsts = append(backendInsts, &b)
+				}
 			}
 		}
 	}
-	if haveIncompleteBackendInsts {
-		now := time.Now()
-		p.cacheTs = &now
-	} else {
-		p.cacheTs = nil
+	// Default to having no backend instances, then we have no reason to set a TTL
+	p.cacheTs = nil
+	if len(backendInsts) > 0 {
+		haveIncompleteBackendInsts := false
+		// Retrieve and update cache, using the tags from the file
+		if err := fns.getExistingResources(backendInsts); err == nil {
+			for _, b := range backendInsts {
+				// Merge the file props with the backend props
+				instProps := b.fileProps
+				for k, v := range b.backendProps {
+					instProps[k] = v
+				}
+				if encoded, err := types.AnyValue(instProps); err != nil {
+					logger.Warn("refreshCachedInstances",
+						"msg", "Failed to encode backend instance props",
+						"props", instProps,
+						"error", err)
+				} else {
+					logger.Info("refreshCachedInstances",
+						"msg", fmt.Sprintf("Using backend properties for instance %s", b.resName),
+						"props", instProps)
+					b.description.Properties = encoded
+				}
+				// Track if it is complete
+				if !b.complete {
+					haveIncompleteBackendInsts = true
+				}
+			}
+		} else {
+			logger.Warn("refreshNilInstanceCache",
+				"msg", "Failed to determine existing resources",
+				"error", err)
+			// Hit an error, ensure that the cache TTL is set
+			haveIncompleteBackendInsts = true
+		}
+		// Set the TTL if the backend data is not complete
+		if haveIncompleteBackendInsts {
+			now := time.Now()
+			p.cacheTs = &now
+		}
 	}
-	p.cachedInstances = &result
-
-	logger.Info("refreshCachedInstances", "cache-size", len(*p.cachedInstances))
+	p.cachedInstances = result
+	logger.Info("refreshCachedInstances", "cache-size", len(p.cachedInstances))
 }
 
 // parseTerraformTags parses the platform-specific tags into a generic map

@@ -47,7 +47,7 @@ func (c *SoftlayerClient) GetAllowedStorageVirtualGuests(storageID int) ([]int, 
 }
 
 // GetVirtualGuests gets all VMs
-func (c *SoftlayerClient) GetVirtualGuests(username, apiKey string, mask, filters *string) (resp []datatypes.Virtual_Guest, err error) {
+func (c *SoftlayerClient) GetVirtualGuests(mask, filters *string) (resp []datatypes.Virtual_Guest, err error) {
 	acct := services.GetAccountService(c.sess)
 	if mask != nil {
 		acct = acct.Mask(*mask)

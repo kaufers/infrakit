@@ -7,11 +7,9 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
-	"github.com/deckarep/golang-set"
 	manager_discovery "github.com/docker/infrakit/pkg/manager/discovery"
 	"github.com/docker/infrakit/pkg/types"
 	"github.com/docker/infrakit/pkg/util/exec"
@@ -63,9 +61,9 @@ func (p *plugin) terraformApply() error {
 						}
 						return command.Wait()
 					},
-					tfStateList:         p.doTerraformStateList,
-					tfImport:            p.doTerraformImport,
-					getExistingResource: p.getExistingResource,
+					tfStateList:          p.doTerraformStateList,
+					tfImport:             p.doTerraformImport,
+					getExistingResources: p.getExistingResources,
 				}
 				// The trigger for an apply is typically from a group commit, sleep for a few seconds so
 				// that multiple .tf.json.new files have time to be created
@@ -165,10 +163,10 @@ func (p *plugin) shouldApply() bool {
 
 // External functions to use during when pruning files; broken out for testing
 type tfFuncs struct {
-	tfRefresh           func() error
-	tfStateList         func() (map[TResourceType]map[TResourceName]struct{}, error)
-	tfImport            func(resType TResourceType, resName, resID string) error
-	getExistingResource func(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error)
+	tfRefresh            func() error
+	tfStateList          func() (map[TResourceType]map[TResourceName]struct{}, error)
+	tfImport             func(resType TResourceType, resName, resID string) error
+	getExistingResources func([]*backend) error
 }
 
 // hasRecentDeltas returns true if any tf.json[.new] files have been changed in
@@ -405,6 +403,8 @@ func (p *plugin) handleFilePruning(
 	// Determine files to prune, since multiple resource types can exist per file we want to
 	// track unique filenames
 	pruneFiles := make(map[string]struct{})
+	// Track backend instances that represent instances that may be missing from the state file
+	backendInsts := []*backend{}
 	// If the resource was removed out-of-band then it had a previous entry in the state file
 	// and can be pruned; if there is no entry then query the backend to determine if the
 	// resource still exists
@@ -424,39 +424,42 @@ func (p *plugin) handleFilePruning(
 						resName))
 				pruneFiles[resFilenameProps.FileName] = struct{}{}
 			} else {
-				// Find resource type in backend
-				props, _, err := fns.getExistingResource(resType, resName, resFilenameProps.FileProps)
-				if err != nil {
+				// Find single resource with the given tags in the backend
+				b := backend{
+					resType:   resType,
+					resName:   resName,
+					fileProps: resFilenameProps.FileProps,
+					filename:  resFilenameProps.FileName,
+				}
+				backendInsts = append(backendInsts, &b)
+			}
+		}
+	}
+	if len(backendInsts) > 0 {
+		err := fns.getExistingResources(backendInsts)
+		if err != nil {
+			return err
+		}
+		// Prune if there is no existing resource (ie, we do not have an ID)
+		for _, b := range backendInsts {
+			if b.backendID == "" {
+				logger.Info("handleFilePruning",
+					"msg",
+					fmt.Sprintf("Pruning %v file, resource %v.%v was not found in backend",
+						b.filename,
+						b.resType,
+						b.resName))
+				pruneFiles[b.filename] = struct{}{}
+			} else {
+				// Import resource
+				logger.Info("handleFilePruning",
+					"msg",
+					fmt.Sprintf("Importing %v %v into terraform as resource %v ...",
+						b.resType,
+						b.backendID,
+						b.resName))
+				if err = fns.tfImport(b.resType, string(b.resName), b.backendID); err != nil {
 					return err
-				}
-				// Prune if there is no existing resource or we do not have an ID
-				shouldPrune := true
-				var importID string
-				if props != nil {
-					if idVal, has := (*props)["id"]; has {
-						importID = fmt.Sprintf("%v", idVal)
-						shouldPrune = false
-					}
-				}
-				if shouldPrune {
-					logger.Info("handleFilePruning",
-						"msg",
-						fmt.Sprintf("Pruning %v file, resource %v.%v was not found in backend",
-							resFilenameProps.FileName,
-							resType,
-							resName))
-					pruneFiles[resFilenameProps.FileName] = struct{}{}
-				} else {
-					// Import resource
-					logger.Info("handleFilePruning",
-						"msg",
-						fmt.Sprintf("Importing %v %v into terraform as resource %v ...",
-							string(resType),
-							importID,
-							string(resName)))
-					if err = fns.tfImport(resType, string(resName), importID); err != nil {
-						return err
-					}
 				}
 			}
 		}
@@ -473,52 +476,6 @@ func (p *plugin) handleFilePruning(
 		}
 	}
 	return nil
-}
-
-// getExistingResource queries the backend cloud to get the ID of the resource associated
-// with the given type, name, and properties
-func (p *plugin) getExistingResource(resType TResourceType, resName TResourceName, props TResourceProperties) (*TResourceProperties, bool, error) {
-	// Ony VMs retrival is supported
-	supportedVMs := mapset.NewSetFromSlice(VMTypes)
-	if !supportedVMs.Contains(resType) {
-		return nil, true, nil
-	}
-	switch resType {
-	case VMSoftLayer, VMIBMCloud:
-		tagsProp, has := props["tags"]
-		if !has {
-			return nil, false, nil
-		}
-		// Convert tags to String
-		tagsInterface, ok := tagsProp.([]interface{})
-		if !ok {
-			return nil, false, fmt.Errorf("Cannot process tags, unknown type: %v", reflect.TypeOf(tagsProp))
-		}
-		tags := make([]string, len(tagsInterface))
-		for i, t := range tagsInterface {
-			tags[i] = fmt.Sprintf("%v", t)
-		}
-		// Creds either in env vars or in the plugin Env slice
-		username := os.Getenv(SoftlayerUsernameEnvVar)
-		apiKey := os.Getenv(SoftlayerAPIKeyEnvVar)
-		if username == "" || apiKey == "" {
-			for _, env := range p.envs {
-				if !strings.Contains(env, "=") {
-					continue
-				}
-				split := strings.Split(env, "=")
-				switch split[0] {
-				case SoftlayerUsernameEnvVar:
-					username = split[1]
-				case SoftlayerAPIKeyEnvVar:
-					apiKey = split[1]
-				}
-			}
-		}
-		return GetIBMCloudVMByTag(username, apiKey, tags)
-	}
-	logger.Warn("getExistingResource", "msg", fmt.Sprintf("Unsupported VM type for backend retrival: %v", resType))
-	return nil, true, nil
 }
 
 // doTerraformStateList shells out to run `terraform state list` and parses the result

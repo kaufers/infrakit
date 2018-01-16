@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/docker/infrakit/pkg/provider/ibmcloud/client"
-	"github.com/docker/infrakit/pkg/spi/flavor"
 	"github.com/softlayer/softlayer-go/datatypes"
 	"github.com/softlayer/softlayer-go/filter"
 )
@@ -54,101 +53,63 @@ func mergeLabelsIntoTagSlice(tags []interface{}, labels map[string]string) []str
 	return lines
 }
 
-// GetIBMCloudVMByTag queries Softlayer for VMs that match all of the given tags. Returns
-// properites associated with single VM ID that matches or nil if there are no matches.
-func GetIBMCloudVMByTag(username, apiKey string, tags []string) (*TResourceProperties, bool, error) {
-	c := client.GetClient(username, apiKey)
+// GetIBMCloudInstances returns all VMs that match the optional tag filters
+func GetIBMCloudInstances(c *client.SoftlayerClient, tagFilter *string) ([]backend, error) {
 	mask := "id,hostname,primaryIpAddress,primaryBackendIpAddress,tagReferences[id,tag[name]]"
-	// Use the swarm ID as the filter
 	var filters *string
-	for _, tag := range tags {
-		if strings.HasPrefix(tag, fmt.Sprintf("%s:", flavor.ClusterIDTag)) {
-			f := filter.New(filter.Path("virtualGuests.tagReferences.tag.name").Eq(tag)).Build()
-			logger.Info("GetIBMCloudVMByTag", "msg", fmt.Sprintf("Querying IBM Cloud for VMs with tag filter: %v", f))
-			filters = &f
-		}
+	if tagFilter == nil {
+		logger.Info("GetIBMCloudInstances", "msg", "Querying IBM Cloud without any filters")
+	} else {
+		f := filter.New(filter.Path("virtualGuests.tagReferences.tag.name").Eq(*tagFilter)).Build()
+		logger.Info("GetIBMCloudInstances", "msg", fmt.Sprintf("Querying IBM Cloud for VMs with tag filter: %v", f))
+		filters = &f
 	}
-	vms, err := c.GetVirtualGuests(username, apiKey, &mask, filters)
+	vms, err := c.GetVirtualGuests(&mask, filters)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	vm, err := getUniqueVMByTags(vms, tags)
-	if err != nil {
-		return nil, false, err
-	}
-	if vm == nil {
-		return nil, false, nil
-	}
-	// Map the properties to what we expect to be in the terraform state file
-	props := TResourceProperties{}
-	if vm.PrimaryIpAddress != nil {
-		props["ipv4_address"] = *vm.PrimaryIpAddress
-	}
-	if vm.PrimaryBackendIpAddress != nil {
-		props["ipv4_address_private"] = *vm.PrimaryBackendIpAddress
-	}
-	if vm.Hostname != nil {
-		props["hostname"] = *vm.Hostname
-	}
-	if vm.Id != nil {
-		props["id"] = *vm.Id
-	}
-	logger.Debug("GetIBMCloudVMByTag", "props", props, "V", debugV1)
-	// If all 4 properties were retrieved then this data is complete
-	return &props, len(props) == 4, nil
-}
-
-// getUniqueVMByTags returns the single VM that matches or nil if there are no matches.
-func getUniqueVMByTags(vms []datatypes.Virtual_Guest, tags []string) (*datatypes.Virtual_Guest, error) {
-	// Filter by tags
-	filterVMsByTags(&vms, tags)
-	// No match
-	if len(vms) == 0 {
-		logger.Info("getUniqueVMByTags", "msg", fmt.Sprintf("Detected 0 existing VMs with tags: %v", tags))
-		return nil, nil
-	}
-	// Exactly 1 match
-	if len(vms) == 1 {
-		var name string
-		if vms[0].Hostname != nil {
-			name = *vms[0].Hostname
-		}
-		if vms[0].Id == nil {
-			return nil, fmt.Errorf("VM '%v' missing ID", name)
-		}
-		logger.Info("getUniqueVMByTags", "msg", fmt.Sprintf("Existing VM %v with ID %v matches tags: %v", name, *vms[0].Id, tags))
-		return &vms[0], nil
-	}
-	// More than 1 match
-	ids := []int{}
+	results := []backend{}
 	for _, vm := range vms {
-		ids = append(ids, *vm.Id)
+		// Needs an ID
+		if vm.Id == nil {
+			return nil, fmt.Errorf("Returned VM is missing an ID: %v", vm)
+		}
+		// Map the properties to what we expect to be in the terraform state file
+		props := TResourceProperties{}
+		if vm.PrimaryIpAddress != nil {
+			props["ipv4_address"] = *vm.PrimaryIpAddress
+		}
+		if vm.PrimaryBackendIpAddress != nil {
+			props["ipv4_address_private"] = *vm.PrimaryBackendIpAddress
+		}
+		if vm.Hostname != nil {
+			props["hostname"] = *vm.Hostname
+		}
+		results = append(
+			results,
+			backend{
+				backendID:    fmt.Sprintf("%v", *vm.Id),
+				backendProps: props,
+				backendTags:  parseTags(vm),
+				complete:     len(props) == 3,
+			},
+		)
 	}
-	return nil, fmt.Errorf("Only a single VM should match tags, but VMs %v match tags: %v", ids, tags)
+	logger.Info("GetIBMCloudInstances", "backend-size", len(results), "backend-data", results)
+	return results, nil
 }
 
-// filterVMsByTags removes all VM slice entries that do not contain all of the
-// given tags
-func filterVMsByTags(vms *[]datatypes.Virtual_Guest, tags []string) {
-	matches := []datatypes.Virtual_Guest{}
-	for _, vm := range *vms {
-		allTagsMatch := true
-		for _, tag := range tags {
-			tagMatch := false
-			for _, tagRef := range vm.TagReferences {
-				if *tagRef.Tag.Name == tag {
-					tagMatch = true
-					break
-				}
-			}
-			if !tagMatch {
-				allTagsMatch = false
-				break
-			}
-		}
-		if allTagsMatch {
-			matches = append(matches, vm)
+// parseTags converts the tag references to the standard map[string]string
+func parseTags(vm datatypes.Virtual_Guest) map[string]string {
+	tags := map[string]string{}
+	for _, ref := range vm.TagReferences {
+		tag := *ref.Tag.Name
+		if strings.Contains(tag, ":") {
+			split := strings.SplitN(tag, ":", 2)
+			tags[split[0]] = split[1]
+		} else {
+			tags[tag] = ""
 		}
 	}
-	*vms = matches
+	return tags
 }
