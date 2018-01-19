@@ -54,7 +54,7 @@ func mergeLabelsIntoTagSlice(tags []interface{}, labels map[string]string) []str
 }
 
 // GetIBMCloudInstances returns all VMs that match the optional tag filters
-func GetIBMCloudInstances(c *client.SoftlayerClient, tagFilter *string) ([]backend, error) {
+func GetIBMCloudInstances(c client.API, tagFilter *string) ([]backend, error) {
 	mask := "id,hostname,primaryIpAddress,primaryBackendIpAddress,tagReferences[id,tag[name]]"
 	var filters *string
 	if tagFilter == nil {

@@ -11,6 +11,14 @@ type SoftlayerClient struct {
 	sess *session.Session
 }
 
+// API is the Softlayer client API
+type API interface {
+	AuthorizeToStorage(storageID, guestID int) error
+	DeauthorizeFromStorage(storageID, guestID int) error
+	GetAllowedStorageVirtualGuests(storageID int) ([]int, error)
+	GetVirtualGuests(mask, filters *string) (resp []datatypes.Virtual_Guest, err error)
+}
+
 // GetClient returns a SoftlayerClient instance
 func GetClient(user, apiKey string) *SoftlayerClient {
 	client := &SoftlayerClient{
