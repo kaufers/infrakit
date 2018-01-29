@@ -11,6 +11,7 @@ import (
 	"github.com/docker/infrakit/pkg/spi/metadata"
 	"github.com/docker/infrakit/pkg/template"
 	"github.com/docker/infrakit/pkg/types"
+	"github.com/docker/infrakit/pkg/util/docker"
 )
 
 const (
@@ -35,12 +36,18 @@ type Options struct {
 	// WorkerInitScriptTemplate is the URL of the template for worker init script
 	// This is overridden by the value provided in the spec.
 	WorkerInitScriptTemplate string
+
+	// Docker is the connection info for the Docker client
+	Docker docker.ConnectInfo
 }
 
 // DefaultOptions return an Options with default values filled in.
 var DefaultOptions = Options{
 	Options: template.Options{
 		MultiPass: true,
+	},
+	Docker: docker.ConnectInfo{
+		Host: "unix:///var/run/docker.sock",
 	},
 }
 
@@ -82,6 +89,7 @@ func Run(scope scope.Scope, name plugin.Name,
 				"worker":  workerFlavor,
 			}, nil
 		},
+		run.Group: swarm.NewGroupFlavor(scope, swarm.DockerClient, options.Docker),
 	}
 	onStop = func() {
 		close(workerStop)
