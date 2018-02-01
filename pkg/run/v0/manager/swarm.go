@@ -34,7 +34,7 @@ func configSwarmBackends(options BackendSwarmOptions, managerConfig *Options) er
 	}
 
 	dockerClient, err := docker.NewClient(options.Docker.Host, options.Docker.TLS)
-	log.Debug("Connect to docker", "host", options.Docker.Host, "err=", err, "V", logutil.V(100))
+	log.Info("Connect to docker", "host", options.Docker.Host, "err", err, "V", logutil.V(100))
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func configSwarmBackends(options BackendSwarmOptions, managerConfig *Options) er
 	managerConfig.SpecStore = snapshot
 	managerConfig.cleanUpFunc = func() {
 		dockerClient.Close()
-		log.Debug("closed docker connection", "client", dockerClient, "V", logutil.V(100))
+		log.Info("closed docker connection", "client", dockerClient, "V", logutil.V(100))
 	}
 
 	key := "infrakit.vars"

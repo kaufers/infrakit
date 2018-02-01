@@ -92,6 +92,7 @@ func (p *plugin) CommitGroup(config group.Spec, pretend bool) (string, error) {
 		if !pretend {
 			context.setUpdate(updatePlan)
 			context.changeSettings(settings)
+			log.Info("CommitGroup", "groupID", config.ID, "updated-hash", settings.config.InstanceHash())
 			go func() {
 				log.Info("Executing update plan", "groupID", config.ID, "plan", updatePlan.Explain())
 				if err := updatePlan.Run(p.pollInterval); err != nil {

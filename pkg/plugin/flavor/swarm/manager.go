@@ -106,64 +106,55 @@ func (s *ManagerFlavor) Drain(flavorProperties *types.Any, inst instance.Descrip
 
 	switch {
 	case len(nodes) == 0:
-		return fmt.Errorf("not found %v", inst.ID)
+		log.Warn("Docker NodeDemote, node is not found, nothing to demote", "filter", filter)
+		return nil
 
 	case len(nodes) == 1:
 
 		// Do a swarm leave if and only if this is a manager
-
 		nodeID := nodes[0].ID
-
-		// first read the swarm version which is needed to update node
-		sw, err := dockerClient.SwarmInspect(ctx)
-		if err != nil {
-			return err
-		}
-
-		version := sw.ClusterInfo.Meta.Version
-
-		// then read the state of the node
 		nodeInfo, _, err := dockerClient.NodeInspectWithRaw(ctx, nodeID)
 		if err != nil {
 			return err
 		}
+		version := nodeInfo.Version
 
 		if nodeInfo.Spec.Role != swarm.NodeRoleManager {
-			return fmt.Errorf("not a manager: %v", nodeID)
+			log.Warn("Docker NodeDemote, node is not a manager", "id", nodeID, "hostname", nodeInfo.Description.Hostname)
+			return nil
 		}
 
 		// change to worker
 		nodeInfo.Spec.Role = swarm.NodeRoleWorker
 
-		log.Debug("Docker NodeDemote", "id", nodeID)
+		log.Info("Docker NodeDemote", "id", nodeID, "hostname", nodeInfo.Description.Hostname, "version", nodeInfo.Version)
 		err = dockerClient.NodeUpdate(
 			ctx,
 			nodeID,
 			version,
 			nodeInfo.Spec)
 		if err != nil {
+			log.Error("Docker NodeDemote failure", "id", nodeID, "hostname", nodeInfo.Description.Hostname, "err", err)
 			return err
 		}
 
 		// If running on the same node (self), then do docker swarm leave
 		// otherwise, remove the node
 		if s.isSelf(inst) {
-
-			log.Debug("Docker SwarmLeave", "id", nodeID)
-
+			log.Info("Docker SwarmLeave", "id", nodeID)
 			err := dockerClient.SwarmLeave(ctx, true)
 			if err != nil {
+				log.Error("Docker SwarmLeave failure", "id", nodeID, "hostname", nodeInfo.Description.Hostname, "err", err)
 				return err
 			}
-
 		} else {
-			log.Debug("Docker NodeRemote", "id", nodeID)
-
+			log.Info("Docker NodeRemote", "id", nodeID)
 			err := dockerClient.NodeRemove(
 				ctx,
 				nodeID,
 				docker_types.NodeRemoveOptions{Force: true})
 			if err != nil {
+				log.Error("Docker NodeRemove failure", "id", nodeID, "err", err)
 				return err
 			}
 		}

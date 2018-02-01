@@ -339,7 +339,7 @@ func (m *manager) loadMetadata() (err error) {
 		return nil
 	}
 
-	log.Debug("loading metadata and committing", "V", debugV3)
+	log.Info("loading metadata and committing", "V", debugV3)
 
 	var saved interface{}
 	err = m.Options.MetadataStore.Load(&saved)
@@ -354,11 +354,11 @@ func (m *manager) loadMetadata() (err error) {
 	}
 
 	if any == nil {
-		log.Debug("no metadata stored", "V", debugV3)
+		log.Info("no metadata stored", "V", debugV3)
 		return
 	}
 
-	log.Debug("loaded metadata", "data", any.String(), "V", debugV3)
+	log.Info("loaded metadata", "data", any.String(), "V", debugV3)
 	_, proposed, cas, e := m.Updatable.Changes([]metadata.Change{
 		{Path: types.Dot, Value: any},
 	})
@@ -368,7 +368,7 @@ func (m *manager) loadMetadata() (err error) {
 		return
 	}
 
-	log.Debug("updating backend with stored metadata", "cas", cas, "proposed", proposed, "V", debugV3)
+	log.Info("updating backend with stored metadata", "cas", cas, "proposed", proposed, "V", debugV3)
 	return m.Updatable.Commit(proposed, cas)
 }
 

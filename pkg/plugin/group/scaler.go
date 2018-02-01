@@ -58,7 +58,7 @@ func (s *scaler) PlanUpdate(scaled Scaled, settings groupSettings, newSettings g
 
 		if rollCount == 0 {
 			if settings.config.InstanceHash() == newSettings.config.InstanceHash() {
-
+				log.Info("Instance hash has not changed", "ID", s.ID(), "hash", settings.config.InstanceHash())
 				// This is a no-op update because:
 				//  - the instance configuration is unchanged
 				//  - the group contains no instances with an undesired state
