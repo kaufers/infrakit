@@ -198,7 +198,7 @@ func (s *scaler) Stop() {
 
 func (s *scaler) Run() {
 	ticker := time.NewTicker(s.pollInterval)
-
+	log.Info("Run-Converge-loop")
 	s.converge()
 	for {
 		select {
@@ -235,6 +235,7 @@ func (s *scaler) converge() {
 	}
 
 	log.Debug("Found existing instances", "descriptions", descriptions, "V", debugV)
+	log.Debug("Found existing instances", "len", len(descriptions))
 
 	grp := sync.WaitGroup{}
 
@@ -242,7 +243,7 @@ func (s *scaler) converge() {
 	desiredSize := s.getSize()
 	switch {
 	case actualSize == desiredSize:
-		log.Debug("No action - Group has enough instances", "desired", desiredSize)
+		log.Info("No action - Group has enough instances", "desired", desiredSize)
 
 	case actualSize > desiredSize:
 		remove := actualSize - desiredSize
