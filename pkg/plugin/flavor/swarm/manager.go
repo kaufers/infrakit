@@ -3,6 +3,7 @@ package swarm
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	docker_types "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -124,8 +125,11 @@ func (s *ManagerFlavor) Drain(flavorProperties *types.Any, inst instance.Descrip
 		// If the node is not a manager then remove it from the swarm (it is possible that the node
 		// was demoted but then failed to be removed and Destroyed)
 		if nodeInfo.Spec.Role != swarm.NodeRoleManager {
-			log.Warn("Node is not a manager, attempting to leave swarm", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
-			err = dockerClient.SwarmLeave(ctx, true)
+			log.Warn("Node is not a manager, attempting to remove it", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
+			err := dockerClient.NodeRemove(
+				ctx,
+				nodeID,
+				docker_types.NodeRemoveOptions{Force: true})
 			if err != nil {
 				return err
 			}
@@ -135,7 +139,7 @@ func (s *ManagerFlavor) Drain(flavorProperties *types.Any, inst instance.Descrip
 		// change to worker
 		nodeInfo.Spec.Role = swarm.NodeRoleWorker
 
-		log.Debug("Docker NodeDemote", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
+		log.Info("Docker NodeDemote", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
 		err = dockerClient.NodeUpdate(
 			ctx,
 			nodeID,
@@ -145,24 +149,57 @@ func (s *ManagerFlavor) Drain(flavorProperties *types.Any, inst instance.Descrip
 			return err
 		}
 
-		// If running on the same node (self), then do docker swarm leave
-		// otherwise, remove the node
-		if s.isSelf(inst) {
-			log.Debug("Docker SwarmLeave", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
-			err := dockerClient.SwarmLeave(ctx, true)
-			if err != nil {
-				return err
+		go func() {
+			// Wait a few seconds and then verify that the node is now a worker
+			attempt := 0
+			maxAttempts := 11
+			for {
+				attempt++
+				time.Sleep(time.Duration(10) * time.Second)
+				// read the state of the node, getting the current version
+				nodeInfo, _, err := dockerClient.NodeInspectWithRaw(ctx, nodeID)
+				if err == nil {
+					if nodeInfo.Spec.Role == swarm.NodeRoleWorker {
+						log.Info("Node has been demoted", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
+						break
+					}
+					log.Warn("Node has not yet demoted to worker",
+						"role", nodeInfo.Spec.Role,
+						"hostname", nodeInfo.Description.Hostname,
+						"id", nodeID,
+						"error", err)
+					err = fmt.Errorf("Node failed to demote")
+				} else {
+					log.Error("Failed to inspect node after demote",
+						"hostname", nodeInfo.Description.Hostname,
+						"id", nodeID,
+						"error", err)
+				}
+				if attempt < maxAttempts {
+					continue
+				}
+				return
 			}
-		} else {
-			log.Debug("Docker NodeRemote", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
-			err := dockerClient.NodeRemove(
-				ctx,
-				nodeID,
-				docker_types.NodeRemoveOptions{Force: true})
-			if err != nil {
-				return err
+
+			// If running on the same node (self), then do docker swarm leave
+			// otherwise, remove the node
+			if s.isSelf(inst) {
+				log.Info("Docker SwarmLeave", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
+				err := dockerClient.SwarmLeave(ctx, true)
+				if err != nil {
+					log.Info("Failed to leave swarm", "hostname", nodeInfo.Description.Hostname, "id", nodeID, "error", err)
+				}
+			} else {
+				log.Info("Docker NodeRemote", "hostname", nodeInfo.Description.Hostname, "id", nodeID)
+				err := dockerClient.NodeRemove(
+					ctx,
+					nodeID,
+					docker_types.NodeRemoveOptions{Force: true})
+				if err != nil {
+					log.Info("Failed to remove node from swarm", "hostname", nodeInfo.Description.Hostname, "id", nodeID, "error", err)
+				}
 			}
-		}
+		}()
 
 		return nil
 

@@ -27,6 +27,10 @@ const (
 	// EnvPollInterval is the frequency for polling
 	EnvPollInterval = "INFRAKIT_GROUP_POLL_INTERVAL"
 
+	// EnvHealthyDuration is the duration a node must report as healthy before considering
+	// the node update complete
+	EnvHealthyDuration = "INFRAKIT_GROUP_HEALTHY_DURATION"
+
 	// EnvMaxParallelNum sets the max parallelism for creating instances
 	EnvMaxParallelNum = "INFRAKIT_GROUP_MAX_PARALLEL_NUM"
 
@@ -68,6 +72,7 @@ func leaderSelfUpdatePolicy(v string) *group_types.PolicyLeaderSelfUpdate {
 var DefaultOptions = group_types.Options{
 	Self: nilLogicalIDIfEmptyString(local.Getenv(EnvSelfLogicalID, "")),
 	PolicyLeaderSelfUpdate:  leaderSelfUpdatePolicy(local.Getenv(EnvPolicyLeaderSelfUpdate, "last")),
+	HealthyDuration:         types.MustParseDuration(local.Getenv(EnvHealthyDuration, "90s")),
 	PollInterval:            types.MustParseDuration(local.Getenv(EnvPollInterval, "10s")),
 	MaxParallelNum:          types.MustParseUint(local.Getenv(EnvMaxParallelNum, "0")),
 	PollIntervalGroupSpec:   types.MustParseDuration(local.Getenv(EnvPollInterval, "10s")),

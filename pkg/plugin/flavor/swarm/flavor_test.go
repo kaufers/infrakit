@@ -147,11 +147,42 @@ func TestWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, flavor.Unhealthy, health)
 
+	// Worker with no state defined
 	filter, err := filters.FromParam(fmt.Sprintf(`{"label": {"%s=%s": true}}`, associationTag, associationID))
 	require.NoError(t, err)
 	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
 		[]swarm.Node{
 			{},
+		}, nil)
+	health, err = flavorImpl.Healthy(
+		types.AnyString("{}"),
+		instance.Description{Tags: map[string]string{associationTag: associationID}})
+	require.NoError(t, err)
+	require.Equal(t, flavor.Unhealthy, health)
+
+	// Worker that is down
+	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
+		[]swarm.Node{
+			{
+				Status: swarm.NodeStatus{
+					State: swarm.NodeStateDown,
+				},
+			},
+		}, nil)
+	health, err = flavorImpl.Healthy(
+		types.AnyString("{}"),
+		instance.Description{Tags: map[string]string{associationTag: associationID}})
+	require.NoError(t, err)
+	require.Equal(t, flavor.Unhealthy, health)
+
+	// Worker that is ready
+	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
+		[]swarm.Node{
+			{
+				Status: swarm.NodeStatus{
+					State: swarm.NodeStateReady,
+				},
+			},
 		}, nil)
 	health, err = flavorImpl.Healthy(
 		types.AnyString("{}"),
@@ -272,17 +303,67 @@ func TestManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, flavor.Unhealthy, health)
 
+	// Manager that does not have any status
 	filter, err := filters.FromParam(fmt.Sprintf(`{"label": {"%s=%s": true}}`, associationTag, associationID))
 	require.NoError(t, err)
 	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
 		[]swarm.Node{
-			{},
+			{
+				Spec: swarm.NodeSpec{
+					Role: swarm.NodeRoleManager,
+				},
+				Status: swarm.NodeStatus{
+					State: swarm.NodeStateReady,
+				},
+			},
 		}, nil)
 	health, err = flavorImpl.Healthy(
 		types.AnyString("{}"),
 		instance.Description{Tags: map[string]string{associationTag: associationID}})
 	require.NoError(t, err)
-	require.Equal(t, flavor.Healthy, health)
+	require.Equal(t, flavor.Unhealthy, health)
+
+	// Manager that that is not reachable
+	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
+		[]swarm.Node{
+			{
+				ManagerStatus: &swarm.ManagerStatus{
+					Reachability: swarm.ReachabilityUnknown,
+				},
+				Spec: swarm.NodeSpec{
+					Role: swarm.NodeRoleManager,
+				},
+				Status: swarm.NodeStatus{
+					State: swarm.NodeStateReady,
+				},
+			},
+		}, nil)
+	health, err = flavorImpl.Healthy(
+		types.AnyString("{}"),
+		instance.Description{Tags: map[string]string{associationTag: associationID}})
+	require.NoError(t, err)
+	require.Equal(t, flavor.Unhealthy, health)
+
+	// Manager that that is reachable
+	client.EXPECT().NodeList(gomock.Any(), docker_types.NodeListOptions{Filters: filter}).Return(
+		[]swarm.Node{
+			{
+				ManagerStatus: &swarm.ManagerStatus{
+					Reachability: swarm.ReachabilityUnknown,
+				},
+				Spec: swarm.NodeSpec{
+					Role: swarm.NodeRoleManager,
+				},
+				Status: swarm.NodeStatus{
+					State: swarm.NodeStateReady,
+				},
+			},
+		}, nil)
+	health, err = flavorImpl.Healthy(
+		types.AnyString("{}"),
+		instance.Description{Tags: map[string]string{associationTag: associationID}})
+	require.NoError(t, err)
+	require.Equal(t, flavor.Unhealthy, health)
 
 	close(managerStop)
 }

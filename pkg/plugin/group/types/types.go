@@ -27,6 +27,10 @@ type Options struct {
 	// PollInterval is the frequency for syncing the state
 	PollInterval types.Duration
 
+	// HealthyDuration is the duration that a node must be healthy for during a rolling update
+	// before the next node is processed
+	HealthyDuration types.Duration
+
 	// MaxParallelNum is the max number of parallel instance operation. Default =0 (no limit)
 	MaxParallelNum uint
 

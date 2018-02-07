@@ -856,9 +856,11 @@ func TestUpdateFailsWhenInstanceIsUnhealthy(t *testing.T) {
 		newFakeInstanceDefault(minions, nil),
 	)
 
+	unhealthyCount := 0
 	flavorPlugin := testFlavor{
 		healthy: func(flavorProperties *types.Any, inst instance.Description) (flavor.Health, error) {
-			if strings.Contains(flavorProperties.String(), "bad update") {
+			if unhealthyCount == 0 && strings.Contains(flavorProperties.String(), "bad update") {
+				unhealthyCount++
 				return flavor.Unhealthy, nil
 			}
 			return flavor.Healthy, nil
@@ -883,7 +885,7 @@ func TestUpdateFailsWhenInstanceIsUnhealthy(t *testing.T) {
 
 	awaitGroupConvergence(t, grp)
 
-	// Only one instance should exist in the new configuration.
+	// All instances should have been updated
 	badUpdateInstanaces := 0
 	for _, inst := range plugin.instancesCopy() {
 		if inst.Init == "bad update" {
@@ -891,7 +893,7 @@ func TestUpdateFailsWhenInstanceIsUnhealthy(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, 1, badUpdateInstanaces)
+	require.Equal(t, 3, badUpdateInstanaces)
 	require.NoError(t, grp.FreeGroup(id))
 }
 

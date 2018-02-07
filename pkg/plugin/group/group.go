@@ -41,6 +41,7 @@ func NewGroupPlugin(
 		flavorPlugins:   flavorPlugins,
 		options:         options,
 		pollInterval:    options.PollInterval.Duration(),
+		healthyDuration: options.HealthyDuration.Duration(),
 		maxParallelNum:  options.MaxParallelNum,
 		groups:          groups{byID: map[group.ID]*groupContext{}},
 		self:            options.Self,
@@ -54,6 +55,7 @@ type plugin struct {
 	instancePlugins InstancePluginLookup
 	flavorPlugins   FlavorPluginLookup
 	pollInterval    time.Duration
+	healthyDuration time.Duration
 	maxParallelNum  uint
 	lock            sync.RWMutex
 	groups          groups
@@ -94,7 +96,7 @@ func (p *plugin) CommitGroup(config group.Spec, pretend bool) (string, error) {
 			context.changeSettings(settings)
 			go func() {
 				log.Info("Executing update plan", "groupID", config.ID, "plan", updatePlan.Explain())
-				if err := updatePlan.Run(p.pollInterval); err != nil {
+				if err := updatePlan.Run(p.pollInterval, p.healthyDuration); err != nil {
 					log.Error("Update failed", "groupID", config.ID, "err", err)
 				} else {
 					log.Info("Convergence", "groupID", config.ID)
@@ -313,7 +315,7 @@ func (p *plugin) InspectGroups() ([]group.Spec, error) {
 
 type updatePlan interface {
 	Explain() string
-	Run(pollInterval time.Duration) error
+	Run(pollInterval time.Duration, healthyDuration time.Duration) error
 	Stop()
 }
 
@@ -324,7 +326,7 @@ func (n noopUpdate) Explain() string {
 	return "Noop"
 }
 
-func (n noopUpdate) Run(_ time.Duration) error {
+func (n noopUpdate) Run(_, _ time.Duration) error {
 	return nil
 }
 

@@ -2,7 +2,6 @@ package group
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"time"
 
@@ -79,11 +78,13 @@ func (r rollingupdate) Explain() string {
 	return r.desc
 }
 
-func (r *rollingupdate) waitUntilQuiesced(pollInterval time.Duration, expectedNewInstances int) error {
+func (r *rollingupdate) waitUntilQuiesced(pollInterval, healthyDuration time.Duration, expectedNewInstances int) error {
 	// Block until the expected number of instances in the desired state are ready.  Updates are unconcerned with
 	// the health of instances in the undesired state.  This allows a user to dig out of a hole where the original
 	// state of the group is bad, and instances are not reporting as healthy.
 	log.Info("waitUntilQuiesced", "expectedNewInstances", expectedNewInstances)
+	// Track when the expected new instance count is healthy
+	var healthyTs *time.Time
 	// TODO: start processing right away instead of waiting for first tick
 	ticker := time.NewTicker(pollInterval)
 	for {
@@ -130,24 +131,49 @@ func (r *rollingupdate) waitUntilQuiesced(pollInterval time.Duration, expectedNe
 					log.Info("waitUntilQuiesced", "health", "heathy", "nodeID", inst.ID)
 					numHealthy++
 				case flavor.Unhealthy:
-					log.Error("waitUntilQuiesced", "health", "unheathy", "nodeID", inst.ID)
-					return fmt.Errorf("Instance %s is unhealthy", inst.ID)
+					log.Warn("waitUntilQuiesced", "health", "unheathy", "nodeID", inst.ID)
 				case flavor.Unknown:
 					log.Info("waitUntilQuiesced", "health", "unknown", "nodeID", inst.ID)
 				}
 			}
 
 			if numHealthy >= int(expectedNewInstances) {
+				isExceedsHealth := true
+				delta := time.Duration(0)
+				if expectedNewInstances > 0 && healthyDuration > time.Duration(0) {
+					isExceedsHealth = false
+					if healthyTs == nil {
+						ts := time.Now()
+						healthyTs = &ts
+					} else {
+						delta = time.Now().Sub(*healthyTs)
+						if delta >= healthyDuration {
+							isExceedsHealth = true
+						}
+					}
+				}
+				if isExceedsHealth {
+					log.Info("waitUntilQuiesced",
+						"msg", "Scaler has quiesced, terminating loop",
+						"healthyTime", delta,
+						"numHealthy", numHealthy,
+						"expectedNewInstances", expectedNewInstances)
+					return nil
+				} else {
+					log.Warn("waitUntilQuiesced",
+						"msg", "Scaler is not healthy for required duration",
+						"duration", healthyDuration,
+						"healthyTime", delta,
+						"numHealthy", numHealthy,
+						"expectedNewInstances", expectedNewInstances)
+				}
+			} else {
+				healthyTs = nil
 				log.Info("waitUntilQuiesced",
-					"msg", "Scaler has quiesced, terminating loop",
+					"msg", "Waiting for scaler to quiesce",
 					"numHealthy", numHealthy,
 					"expectedNewInstances", expectedNewInstances)
-				return nil
 			}
-			log.Info("waitUntilQuiesced",
-				"msg", "Waiting for scaler to quiesce",
-				"numHealthy", numHealthy,
-				"expectedNewInstances", expectedNewInstances)
 
 		case <-r.stop:
 			ticker.Stop()
@@ -159,7 +185,7 @@ func (r *rollingupdate) waitUntilQuiesced(pollInterval time.Duration, expectedNe
 // Run identifies instances not matching the desired state and destroys them one at a time until all instances in the
 // group match the desired state, with the desired number of instances.
 // TODO(wfarner): Make this routine more resilient to transient errors.
-func (r *rollingupdate) Run(pollInterval time.Duration) error {
+func (r *rollingupdate) Run(pollInterval, healthyDuration time.Duration) error {
 
 	instances, err := labelAndList(r.scaled)
 	if err != nil {
@@ -177,7 +203,7 @@ func (r *rollingupdate) Run(pollInterval time.Duration) error {
 		if desiredSize == 0 {
 			desiredSize = int(r.updatingTo.config.Allocation.Size)
 		}
-		err := r.waitUntilQuiesced(pollInterval, minInt(expectedNewInstances, desiredSize))
+		err := r.waitUntilQuiesced(pollInterval, healthyDuration, minInt(expectedNewInstances, desiredSize))
 		if err != nil {
 			return err
 		}
