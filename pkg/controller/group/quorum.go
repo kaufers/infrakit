@@ -42,10 +42,21 @@ func (q *quorum) PlanUpdate(scaled Scaled, settings groupSettings, newSettings g
 	if err != nil {
 		return nil, err
 	}
-	_, undesired := desiredAndUndesiredInstances(instances, newSettings)
+	desired, undesired := desiredAndUndesiredInstances(instances, newSettings)
 	if len(undesired) == 0 {
 		// This is a no-op update because the instance configuration is unchanged
 		return &noopUpdate{}, nil
+	}
+	log.Warn("SRK", "desired-hash", newSettings.config.InstanceHash(), "desired", len(desired), "undesired", len(undesired), "instances", len(instances))
+	for _, d := range desired {
+		if d.LogicalID == nil {
+			log.Warn("SRK", "desired-id", d.ID, "logicalID", "nil", "tags", d.Tags)
+		} else {
+			log.Warn("SRK", "desired-id", d.ID, "logicalID", *d.LogicalID, "tags", d.Tags)
+		}
+	}
+	for _, d := range undesired {
+		log.Warn("SRK", "undesired-id", d.ID, "logicalID", *d.LogicalID, "tags", d.Tags)
 	}
 
 	return &rollingupdate{
