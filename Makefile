@@ -15,7 +15,7 @@ E2E_TESTS?=true
 SRCS  := $(shell find . -type f -name '*.go')
 
 # Set the go build tags here.
-GO_BUILD_TAGS?=builtin providers
+GO_BUILD_TAGS?=builtin providers callable
 
 # Allow turning off function inlining and variable registerization
 ifeq (${DISABLE_OPTIMIZATION},true)
