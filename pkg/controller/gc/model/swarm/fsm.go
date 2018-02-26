@@ -114,7 +114,7 @@ func (m *model) FoundNode(fsm fsm.FSM, desc instance.Description) error {
 
 	if node.Status.State != swarm.NodeStateReady {
 		fsm.Signal(dockerNodeDown)
-		log.Error("swarm node down", "node", node)
+		log.Error("swarm node down", "node", node.ID, "hostname", node.Description.Hostname)
 		return nil
 	}
 
@@ -126,7 +126,7 @@ func (m *model) FoundNode(fsm fsm.FSM, desc instance.Description) error {
 				return nil
 			default:
 				fsm.Signal(dockerNodeDown)
-				log.Error("swarm manager node down", "node", node)
+				log.Error("swarm manager node down", "node", node.ID, "hostname", node.Description.Hostname)
 				return nil
 			}
 		}

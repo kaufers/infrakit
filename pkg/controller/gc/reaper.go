@@ -347,7 +347,7 @@ func (r *reaper) processObservations(ctx context.Context) {
 					r.model.FoundNode(found.FSM, node)
 					found.Node = node
 
-					log.Debug("foundNode", "node", node, "V", debugV)
+					log.Debug("foundNode", "node", node.ID, "key", key, "V", debugV)
 				}
 			}
 
@@ -367,7 +367,7 @@ func (r *reaper) processObservations(ctx context.Context) {
 					r.model.LostNode(item.FSM)
 					delete(r.items, key)
 
-					log.Debug("lostNode", "node", lost, "key", key, "V", debugV)
+					log.Debug("lostNode", "node", lost.ID, "key", key, "V", debugV)
 				}
 			}
 
@@ -381,6 +381,11 @@ func (r *reaper) processObservations(ctx context.Context) {
 			for _, instance := range found {
 				key, err := r.instanceObserver.KeyOf(instance)
 				if err != nil {
+					if instance.LogicalID == nil {
+						log.Warn("Errror processing found node", "instance", instance.ID, "error", err)
+					} else {
+						log.Warn("Errror processing found node", "instance", instance.ID, "logicalID", *instance.LogicalID, "error", err)
+					}
 					continue // bad data but shouldn't halt everything else
 				}
 
@@ -395,7 +400,7 @@ func (r *reaper) processObservations(ctx context.Context) {
 					r.model.FoundInstance(found.FSM, instance)
 					found.Instance = instance
 
-					log.Debug("foundInstance", "instance", instance, "V", debugV)
+					log.Debug("foundInstance", "instance", instance.ID, "key", key, "V", debugV)
 				}
 			}
 
@@ -407,6 +412,11 @@ func (r *reaper) processObservations(ctx context.Context) {
 
 				key, err := r.instanceObserver.KeyOf(lost)
 				if err != nil {
+					if lost.LogicalID == nil {
+						log.Warn("Errror processing lost node", "instance", lost.ID, "error", err)
+					} else {
+						log.Warn("Errror processing lost node", "instance", lost.ID, "logicalID", *lost.LogicalID, "error", err)
+					}
 					continue // bad data but shouldn't halt everything else
 				}
 
@@ -415,7 +425,7 @@ func (r *reaper) processObservations(ctx context.Context) {
 					r.model.LostInstance(item.FSM)
 					delete(r.items, key)
 
-					log.Debug("lostInstance", "instance", lost, "key", key, "V", debugV)
+					log.Debug("lostInstance", "instance", lost.ID, "key", key, "V", debugV)
 				}
 			}
 
